@@ -1,0 +1,80 @@
+# Default: `docker compose up` → API alone, memory store, embedded-index
+# validation against the REAL full-corpus index. Works instantly, no downloads.
+#
+# Profiles demonstrate the extensibility seams:
+#   docker compose --profile postgres up   → durable store (STORE=postgres), port 8082
+#   docker compose --profile redis up      → RedisValidator (VALIDATOR=redis), port 8081
+
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      STORE: memory
+      SEED_PRODUCTS: "true"
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  # ---------- profile: redis --------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    profiles: [redis]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  seed-redis:
+    build: .
+    profiles: [redis]
+    entrypoint: ["/app/seedredis", "-addr", "redis:6379", "-index", "/app/data/coupons.idx"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  api-redis:
+    build: .
+    profiles: [redis]
+    ports:
+      - "8081:8080"
+    environment:
+      STORE: memory
+      SEED_PRODUCTS: "true"
+      VALIDATOR: redis
+      REDIS_ADDR: redis:6379
+    depends_on:
+      seed-redis:
+        condition: service_completed_successfully
+
+  # ---------- profile: postgres ------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    profiles: [postgres]
+    environment:
+      POSTGRES_USER: kart
+      POSTGRES_PASSWORD: kart
+      POSTGRES_DB: kart
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kart -d kart"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api-postgres:
+    build: .
+    profiles: [postgres]
+    ports:
+      - "8082:8080"
+    environment:
+      STORE: postgres
+      DATABASE_URL: postgres://kart:kart@db:5432/kart?sslmode=disable
+      SEED_PRODUCTS: "true"
+    depends_on:
+      db:
+        condition: service_healthy

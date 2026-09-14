@@ -1,0 +1,104 @@
+{
+  "info": {
+    "name": "kart-challenge — Order Food Online API",
+    "description": "All endpoints incl. edge cases. Set {{baseUrl}} (default http://localhost:8080) and {{apiKey}} (default apitest).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "apiKey", "value": "apitest" }
+  ],
+  "item": [
+    {
+      "name": "Products",
+      "item": [
+        { "name": "List products", "request": { "method": "GET", "url": "{{baseUrl}}/api/product" } },
+        { "name": "Get product 10", "request": { "method": "GET", "url": "{{baseUrl}}/api/product/10" } },
+        { "name": "Get product — invalid id (400)", "request": { "method": "GET", "url": "{{baseUrl}}/api/product/abc" } },
+        { "name": "Get product — unknown (404)", "request": { "method": "GET", "url": "{{baseUrl}}/api/product/999" } },
+        {
+          "name": "Create product (extension, 201)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/product",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"name\":\"Mango Lassi\",\"price\":4.5,\"category\":\"Drinks\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Place order (200)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":2}]}" }
+          }
+        },
+        {
+          "name": "Order with valid coupon HAPPYHRS (200)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"HAPPYHRS\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Order with invalid coupon SUPER100 (422)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"SUPER100\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Order without api_key (401)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Order with unknown product (422)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"777\",\"quantity\":1}]}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Operations",
+      "item": [
+        { "name": "Liveness", "request": { "method": "GET", "url": "{{baseUrl}}/healthz" } },
+        { "name": "Readiness + index provenance", "request": { "method": "GET", "url": "{{baseUrl}}/readyz" } },
+        { "name": "OpenAPI spec", "request": { "method": "GET", "url": "{{baseUrl}}/openapi.yaml" } }
+      ]
+    }
+  ]
+}
