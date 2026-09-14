@@ -47,9 +47,11 @@ docker compose --profile redis up      # Redis-backed validator (port 8081)
 
 ## API
 
-Base path `/api` (per the spec's server URL). Import
-[postman_collection.json](postman_collection.json) or use the served spec at
-`/openapi.yaml`.
+Base path `/api` (per the spec's server URL). Three ways to explore:
+**interactive Swagger UI at [`/docs`](https://gokart-zba3.onrender.com/docs)**
+("Try it out" targets the serving host; Authorize with `apitest`),
+[postman_collection.json](postman_collection.json), or the pinned original
+spec served at `/openapi.yaml`.
 
 | Endpoint | Auth | Success | Errors |
 |---|---|---|---|

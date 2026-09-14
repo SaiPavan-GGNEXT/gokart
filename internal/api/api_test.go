@@ -167,6 +167,8 @@ func TestEdgeCaseMatrix(t *testing.T) {
 		{"healthz", call{"GET", "/healthz", "", ""}, 200, "ok"},
 		{"readyz", call{"GET", "/readyz", "", ""}, 200, "ready"},
 		{"openapi served", call{"GET", "/openapi.yaml", "", ""}, 200, "openapi: 3.1.0"},
+		{"swagger ui served", call{"GET", "/docs", "", ""}, 200, "swagger-ui"},
+		{"extended spec served", call{"GET", "/docs/openapi.yaml", "", ""}, 200, "implementation docs"},
 	}
 
 	for _, tc := range cases {
