@@ -28,7 +28,8 @@ type Config struct {
 	APIKeys         map[string][]string
 	SeedProducts    bool // seed catalog at startup when the store is empty
 	BodyLimitBytes  int
-	RateLimitRPM    int // per-IP requests/minute; 0 disables
+	RateLimitRPM    int    // per-IP requests/minute; 0 disables
+	CORSOrigins     string // comma-separated allowed origins; "*" for any
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
@@ -53,6 +54,7 @@ func Load() (*Config, error) {
 		SeedProducts:    getenvBool("SEED_PRODUCTS", true),
 		BodyLimitBytes:  getenvInt("BODY_LIMIT_BYTES", 1<<20), // 1 MiB
 		RateLimitRPM:    getenvInt("RATE_LIMIT_RPM", 300),
+		CORSOrigins:     getenv("CORS_ORIGINS", "*"),
 		ReadTimeout:     getenvDur("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout:    getenvDur("WRITE_TIMEOUT", 10*time.Second),
 		IdleTimeout:     getenvDur("IDLE_TIMEOUT", 60*time.Second),

@@ -184,6 +184,27 @@ func TestEdgeCaseMatrix(t *testing.T) {
 	}
 }
 
+// TestCORSPreflight: a browser frontend on another origin must be able to
+// preflight POST /api/order with the api_key header.
+func TestCORSPreflight(t *testing.T) {
+	app := newTestApp(t)
+	req := httptest.NewRequest("OPTIONS", "/api/order", nil)
+	req.Header.Set("Origin", "https://kart-ui.onrender.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "api_key, content-type")
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 && resp.StatusCode != 200 {
+		t.Fatalf("preflight status = %d", resp.StatusCode)
+	}
+	if resp.Header.Get("Access-Control-Allow-Origin") == "" {
+		t.Fatal("missing Access-Control-Allow-Origin on preflight response")
+	}
+}
+
 // TestErrorEnvelopeShape: every error, including router-level ones, must be
 // the spec's ApiResponse {code, type, message}.
 func TestErrorEnvelopeShape(t *testing.T) {
