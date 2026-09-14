@@ -1,0 +1,14 @@
+[
+  {"id": "1",  "name": "Belgian Waffle",        "price": 8.50,  "category": "Waffle"},
+  {"id": "2",  "name": "Strawberry Waffle",     "price": 9.75,  "category": "Waffle"},
+  {"id": "3",  "name": "Classic Cheeseburger",  "price": 11.20, "category": "Burger"},
+  {"id": "4",  "name": "Spicy Chicken Burger",  "price": 12.40, "category": "Burger"},
+  {"id": "5",  "name": "Margherita Pizza",      "price": 13.90, "category": "Pizza"},
+  {"id": "6",  "name": "Pepperoni Pizza",       "price": 15.60, "category": "Pizza"},
+  {"id": "7",  "name": "Caesar Salad",          "price": 9.30,  "category": "Salad"},
+  {"id": "8",  "name": "Iced Latte",            "price": 4.80,  "category": "Drinks"},
+  {"id": "9",  "name": "Fresh Orange Juice",    "price": 5.20,  "category": "Drinks"},
+  {"id": "10", "name": "Chicken Waffle",        "price": 12.99, "category": "Waffle"},
+  {"id": "11", "name": "Tiramisu",              "price": 7.40,  "category": "Dessert"},
+  {"id": "12", "name": "Chocolate Brownie",     "price": 6.10,  "category": "Dessert"}
+]

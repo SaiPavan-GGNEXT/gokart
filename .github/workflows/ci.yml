@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: tests (race detector)
+        run: go test ./... -race -count=1
+
+      - name: coupon lookup benchmark (informational)
+        run: go test ./internal/coupon/ -bench=Contains -benchmem -run=NONE
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build
+        run: docker build -t kart-challenge:ci .
+      - name: container smoke test
+        run: |
+          docker run -d --rm --name kart -p 8080:8080 kart-challenge:ci
+          for i in $(seq 1 20); do
+            sleep 1
+            if curl -fsS http://localhost:8080/readyz > /dev/null; then break; fi
+          done
+          curl -fsS http://localhost:8080/api/product | grep -q "Chicken Waffle"
+          # real full-corpus validation must work inside the container
+          curl -fsS -X POST http://localhost:8080/api/order \
+            -H api_key:apitest -H content-type:application/json \
+            -d '{"couponCode":"HAPPYHRS","items":[{"productId":"10","quantity":1}]}' | grep -q '"id"'
+          curl -sS -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/api/order \
+            -H api_key:apitest -H content-type:application/json \
+            -d '{"couponCode":"SUPER100","items":[{"productId":"10","quantity":1}]}' | grep -q 422
+          docker stop kart

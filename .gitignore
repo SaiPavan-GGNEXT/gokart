@@ -1,0 +1,10 @@
+# Raw corpus (2.1 GB) is never committed — download via `make corpus`.
+# The built index data/coupons.idx IS committed (see README).
+data/*.gz
+tmp/
+bin/
+coverage.out
+*.log
+.DS_Store
+frontend/node_modules/
+frontend/dist/

@@ -1,0 +1,32 @@
+# Render Blueprint: one-click deploy of the API + managed Postgres.
+# Connect the repo at https://dashboard.render.com/blueprints → New Blueprint.
+#
+# Render injects PORT; the server reads it. Health is gated on /readyz, which
+# passes only after the coupon index is loaded and verified — a broken deploy
+# never receives traffic. NOTE: Render's free Postgres expires after 30 days;
+# switch STORE=memory (and drop the database block) for an infra-free demo.
+
+services:
+  - type: web
+    name: kart-challenge-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /readyz
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: prod
+      - key: STORE
+        value: postgres
+      - key: SEED_PRODUCTS
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kart-db
+          property: connectionString
+
+databases:
+  - name: kart-db
+    plan: free
+    databaseName: kart
+    user: kart

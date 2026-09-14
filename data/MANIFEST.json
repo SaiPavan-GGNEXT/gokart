@@ -1,0 +1,29 @@
+{
+  "description": "Provenance of the committed coupons.idx: built from the full raw corpus by cmd/indexer. Re-verify anytime with `make corpus && make index` — the rebuilt index is byte-identical for identical inputs.",
+  "index": "coupons.idx",
+  "valid_code_count": 8,
+  "total_corpus_lines": 313064705,
+  "sources": [
+    {
+      "name": "couponbase1.gz",
+      "url": "https://orderfoodonline-files.s3.ap-southeast-2.amazonaws.com/couponbase1.gz",
+      "bytes": 655069725,
+      "sha256": "df1883fb03f5dee2f5076efda84d35a74342b77bc19bf524dc5fab8fe8c79740",
+      "lines": 107260777
+    },
+    {
+      "name": "couponbase2.gz",
+      "url": "https://orderfoodonline-files.s3.ap-southeast-2.amazonaws.com/couponbase2.gz",
+      "bytes": 729014156,
+      "sha256": "e95ca9e921dfcb58535eba805f936564cbb95f76c4d15d635de76caf991b6887",
+      "lines": 107260776
+    },
+    {
+      "name": "couponbase3.gz",
+      "url": "https://orderfoodonline-files.s3.ap-southeast-2.amazonaws.com/couponbase3.gz",
+      "bytes": 737687803,
+      "sha256": "32f7b98c255db7bf7e06212774daf68277537de3e261def5821737f0e51923bb",
+      "lines": 98566152
+    }
+  ]
+}
