@@ -1,4 +1,4 @@
-module github.com/SAIPAVANKUMARGUNDA/go-kart
+module github.com/SaiPavan-GGNEXT/gokart
 
 go 1.26.2
 

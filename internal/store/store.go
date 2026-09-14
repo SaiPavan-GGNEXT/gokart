@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
 )
 
 // ErrNotFound is returned when a requested entity does not exist.

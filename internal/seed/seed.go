@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
 )
 
 //go:embed products.json

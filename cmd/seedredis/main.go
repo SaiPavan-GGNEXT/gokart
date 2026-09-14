@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/coupon"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/coupon"
 )
 
 func main() {
