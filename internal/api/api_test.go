@@ -12,11 +12,11 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/saipavankumar/kart-challenge/internal/config"
-	"github.com/saipavankumar/kart-challenge/internal/coupon"
-	"github.com/saipavankumar/kart-challenge/internal/domain"
-	"github.com/saipavankumar/kart-challenge/internal/service"
-	"github.com/saipavankumar/kart-challenge/internal/store/memory"
+	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/config"
+	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/coupon"
+	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
+	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/service"
+	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/store/memory"
 )
 
 // newTestApp wires a full app: memory stores, a REAL index validator over a

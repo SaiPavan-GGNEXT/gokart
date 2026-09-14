@@ -1,4 +1,4 @@
-module github.com/saipavankumar/kart-challenge
+module github.com/SAIPAVANKUMARGUNDA/go-kart
 
 go 1.26.2
 
