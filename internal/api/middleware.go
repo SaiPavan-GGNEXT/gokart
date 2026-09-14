@@ -6,7 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/config"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/config"
 )
 
 // requireScope authenticates the api_key header and authorizes the scope.

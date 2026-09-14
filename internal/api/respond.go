@@ -6,7 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
 )
 
 // fail writes the uniform APIResponse error envelope.

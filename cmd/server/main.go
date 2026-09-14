@@ -18,15 +18,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/api"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/config"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/coupon"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/seed"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/service"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/store"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/store/memory"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/store/postgres"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/api"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/config"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/coupon"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/seed"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/service"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/store"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/store/memory"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/store/postgres"
 )
 
 func main() {

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/store"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/store"
 )
 
 // ProductStore is an in-memory, mutex-guarded product catalog.

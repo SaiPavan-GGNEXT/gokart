@@ -13,8 +13,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/config"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/service"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/config"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/service"
 )
 
 //go:embed openapi.yaml

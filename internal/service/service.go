@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/coupon"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/store"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/coupon"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/store"
 )
 
 // Business limits. Structural bounds (item count, name lengths) guard against

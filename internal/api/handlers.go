@@ -11,8 +11,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/domain"
-	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/service"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/domain"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/service"
 )
 
 type handlers struct {
