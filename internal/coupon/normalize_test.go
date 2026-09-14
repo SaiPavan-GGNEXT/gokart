@@ -10,20 +10,20 @@ func TestNormalize(t *testing.T) {
 	}{
 		{"HAPPYHRS", "HAPPYHRS", true},
 		{"FIFTYOFF", "FIFTYOFF", true},
-		{"ABCDEFGH12", "ABCDEFGH12", true},          // 10 chars, upper bound
-		{"  HAPPYHRS  ", "HAPPYHRS", true},          // surrounding whitespace trimmed
-		{"HAPPYHRS\r", "HAPPYHRS", true},            // CRLF tolerance
-		{"1234567", "", false},                      // 7 chars — too short
-		{"ABCDEFGH123", "", false},                  // 11 chars — too long
-		{"", "", false},                             // empty
-		{"happyhrs", "", false},                     // lowercase not in alphabet
-		{"HAPPY HRS", "", false},                    // inner space
-		{"HÄPPYHRS", "", false},                     // multibyte: 8 runes, 9 bytes, bad byte
-		{"HAPPY-HR", "", false},                     // punctuation
-		{"HAPPYHR\x00", "", false},                  // NUL can never be part of a code
-		{"OVER9000", "OVER9000", true},              // digits allowed
-		{"\tFIFTYOFF\n", "FIFTYOFF", true},          // tabs/newlines trimmed
-		{"          ", "", false},                   // whitespace only
+		{"ABCDEFGH12", "ABCDEFGH12", true}, // 10 chars, upper bound
+		{"  HAPPYHRS  ", "HAPPYHRS", true}, // surrounding whitespace trimmed
+		{"HAPPYHRS\r", "HAPPYHRS", true},   // CRLF tolerance
+		{"1234567", "", false},             // 7 chars — too short
+		{"ABCDEFGH123", "", false},         // 11 chars — too long
+		{"", "", false},                    // empty
+		{"happyhrs", "", false},            // lowercase not in alphabet
+		{"HAPPY HRS", "", false},           // inner space
+		{"HÄPPYHRS", "", false},            // multibyte: 8 runes, 9 bytes, bad byte
+		{"HAPPY-HR", "", false},            // punctuation
+		{"HAPPYHR\x00", "", false},         // NUL can never be part of a code
+		{"OVER9000", "OVER9000", true},     // digits allowed
+		{"\tFIFTYOFF\n", "FIFTYOFF", true}, // tabs/newlines trimmed
+		{"          ", "", false},          // whitespace only
 	}
 	for _, tc := range cases {
 		got, ok := Normalize(tc.in)

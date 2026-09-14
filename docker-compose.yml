@@ -2,8 +2,8 @@
 # validation against the REAL full-corpus index. Works instantly, no downloads.
 #
 # Profiles demonstrate the extensibility seams:
-#   docker compose --profile postgres up   → durable store (STORE=postgres), port 8082
-#   docker compose --profile redis up      → RedisValidator (VALIDATOR=redis), port 8081
+#   docker compose --profile postgres up    → durable store (STORE=postgres), port 8082
+#   docker compose --profile redis up       → RedisValidator (VALIDATOR=redis), port 8081
 
 services:
   api:
