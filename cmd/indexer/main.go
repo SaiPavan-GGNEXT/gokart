@@ -16,7 +16,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/saipavankumar/kart-challenge/internal/coupon"
+	"github.com/SAIPAVANKUMARGUNDA/go-kart/internal/coupon"
 )
 
 func main() {
