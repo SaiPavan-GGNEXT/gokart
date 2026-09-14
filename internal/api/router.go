@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
@@ -74,6 +75,15 @@ func New(cfg *config.Config, deps Deps) *fiber.App {
 	app.Use(requestid.New(requestid.Config{ContextKey: "requestid"}))
 	app.Use(recover.New()) // panics become 500s; the process never dies mid-request
 	app.Use(requestLogger())
+	// Browser clients (the separate kart-UI frontend) live on another origin;
+	// api_key is a plain header (no cookies), so wildcard origins are safe.
+	// Lock down via CORS_ORIGINS in environments that warrant it.
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: cfg.CORSOrigins,
+		AllowMethods: "GET,POST,HEAD,OPTIONS",
+		AllowHeaders: "Origin, Content-Type, Accept, api_key",
+		MaxAge:       3600,
+	}))
 
 	// Operational endpoints (outside /api, unauthenticated by design).
 	app.Get("/healthz", h.healthz)
