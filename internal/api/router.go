@@ -20,6 +20,16 @@ import (
 //go:embed openapi.yaml
 var openapiYAML []byte
 
+// The pinned challenge spec stays untouched at /openapi.yaml; /docs serves an
+// interactive Swagger UI backed by an extended spec (relative server URL, so
+// "Try it out" targets THIS deployment, plus the documented extensions).
+//
+//go:embed openapi-extended.yaml
+var openapiExtendedYAML []byte
+
+//go:embed docs.html
+var docsHTML []byte
+
 // Deps are the wired dependencies the router needs.
 type Deps struct {
 	Products *service.Products
@@ -71,6 +81,14 @@ func New(cfg *config.Config, deps Deps) *fiber.App {
 	app.Get("/openapi.yaml", func(c *fiber.Ctx) error {
 		c.Set(fiber.HeaderContentType, "application/yaml")
 		return c.Send(openapiYAML)
+	})
+	app.Get("/docs", func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
+		return c.Send(docsHTML)
+	})
+	app.Get("/docs/openapi.yaml", func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderContentType, "application/yaml")
+		return c.Send(openapiExtendedYAML)
 	})
 
 	api := app.Group("/api")

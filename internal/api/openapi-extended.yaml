@@ -1,0 +1,260 @@
+openapi: 3.1.0
+info:
+  title: Order Food Online — implementation docs
+  description: |-
+    Interactive documentation for THIS implementation. It is the pinned
+    challenge spec (served unmodified at `/openapi.yaml`) plus the documented
+    extensions of this server:
+
+    - `POST /product` — catalog insertion (extension; `manage_products` scope)
+    - uniform `ApiResponse` error envelope on every error
+    - operational endpoints outside the API base path: `/healthz`, `/readyz`
+      (readiness + coupon-index provenance), `/docs`, `/openapi.yaml`
+
+    Auth: click **Authorize** and use API key `apitest`
+    (`apitest_noscope` demonstrates 403).
+  version: 1.1.0
+servers:
+  - url: /api
+tags:
+  - name: product
+    description: Everything about products
+  - name: order
+    description: Place orders
+paths:
+  /product:
+    get:
+      tags: [product]
+      summary: List products
+      description: Get all products available for order
+      operationId: listProducts
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+    post:
+      tags: [product]
+      summary: Create a product (extension)
+      description: >-
+        Extension endpoint beyond the pinned spec: inserts a catalog product.
+        Requires an api_key with the `manage_products` scope. Used by the
+        seeding script (`make seed`).
+      operationId: createProduct
+      security:
+        - api_key: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewProduct"
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          description: Structurally invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "401":
+          description: api_key missing or unknown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "403":
+          description: api_key lacks the manage_products scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "422":
+          description: Semantically invalid (bad price, empty name, ...)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /product/{productId}:
+    get:
+      tags: [product]
+      summary: Find product by ID
+      description: Returns a single product
+      operationId: getProduct
+      parameters:
+        - name: productId
+          in: path
+          description: ID of product to return
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          description: Invalid ID supplied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /order:
+    post:
+      tags: [order]
+      summary: Place an order
+      description: >-
+        Place a new order. `couponCode` is optional; when present it must be
+        8–10 characters of A-Z0-9 AND appear in at least 2 of the 3 corpus
+        files (e.g. HAPPYHRS is valid; SUPER100 is not).
+      operationId: placeOrder
+      security:
+        - api_key: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderReq"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Structurally invalid input (bad JSON, wrong types, missing items)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "401":
+          description: api_key missing or unknown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "403":
+          description: api_key lacks the create_order scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "422":
+          description: Validation exception (unknown product, bad quantity, invalid promo code)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          examples: ["8f14e45f-ceea-467f-a1d6-6ae0bde86a01"]
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: string
+                description: ID of the product
+              quantity:
+                type: integer
+                description: Item count
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+    OrderReq:
+      type: object
+      description: Place a new order
+      properties:
+        couponCode:
+          type: string
+          description: Optional promo code applied to the order
+          examples: [HAPPYHRS]
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: string
+                description: ID of the product (required)
+                examples: ["10"]
+              quantity:
+                type: integer
+                description: Item count (required)
+                examples: [2]
+            required: [productId, quantity]
+      required: [items]
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+          examples: ["10"]
+        name:
+          type: string
+          examples: [Chicken Waffle]
+        price:
+          type: number
+          format: float
+          description: Selling price
+          examples: [12.99]
+        category:
+          type: string
+          examples: [Waffle]
+    NewProduct:
+      type: object
+      description: Fields for creating a product; the server assigns the id.
+      properties:
+        name:
+          type: string
+          examples: [Mango Lassi]
+        price:
+          type: number
+          format: float
+          examples: [4.5]
+        category:
+          type: string
+          examples: [Drinks]
+      required: [name, price, category]
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        type:
+          type: string
+        message:
+          type: string
+  securitySchemes:
+    api_key:
+      type: apiKey
+      name: api_key
+      in: header
