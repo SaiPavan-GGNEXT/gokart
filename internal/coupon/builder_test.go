@@ -53,7 +53,7 @@ func TestBuildEndToEnd(t *testing.T) {
 	})
 	f3 := writeGz(t, dir, "f3.gz", []string{
 		"FFFFFF6666", "GGGGGG7777",
-		"DUPEDUPE", // second FILE for DUPEDUPE → now valid
+		"DUPEDUPE",             // second FILE for DUPEDUPE → now valid
 		"HAPPYHRS", "FIFTYOFF", // planted at EOF
 	})
 
