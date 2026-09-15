@@ -5,7 +5,7 @@
 //
 // Seeding runs at startup only when the store is empty (SEED_PRODUCTS=true,
 // the default). The same catalog can instead be inserted through the public
-// POST /api/product endpoint — see scripts/seed_products.sh.
+// POST /api/product endpoint — see cmd/seedproducts.
 package seed
 
 import (

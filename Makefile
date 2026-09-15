@@ -31,8 +31,7 @@ index: ## Rebuild data/coupons.idx from the raw corpus (needs `make corpus` firs
 	  data/couponbase1.gz data/couponbase2.gz data/couponbase3.gz
 
 seed: ## Insert the catalog through the public POST /api/product endpoint
-	API_URL=$${API_URL:-http://localhost:8080} API_KEY=$${API_KEY:-apitest} \
-	  python3 scripts/seed_products.py
+	go run ./cmd/seedproducts
 
 docker: ## Build the container image
 	docker build -t kart-challenge .
