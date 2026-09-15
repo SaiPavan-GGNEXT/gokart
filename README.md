@@ -14,7 +14,7 @@ trade-offs: [docs/DESIGN.md](docs/DESIGN.md).
 ```
 BUILD TIME (once per corpus)                    REQUEST TIME (every order)
 couponbase{1,2,3}.gz ─► cmd/indexer ─► coupons.idx ─► loaded at startup ─► binary search
-  3.1 GB, 313M lines       ~66 s          736 B          verified, once      18 ns, exact
+  3.1 GB, 313M lines       ~28 s          736 B          verified, once      18 ns, exact
 ```
 
 ## Quick start (no downloads, real validation)
@@ -36,7 +36,7 @@ curl -X POST localhost:8080/api/order \
 ```
 
 Verify the index yourself anytime: `make corpus && make index` (downloads
-2.1 GB, rebuilds in ~1 minute, prints per-file stats + sha256s).
+2.1 GB, rebuilds in ~30 s, prints per-file stats + sha256s).
 
 Variants (extensibility seams, live):
 

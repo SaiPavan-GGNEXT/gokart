@@ -12,8 +12,10 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,7 +40,12 @@ type BuildOptions struct {
 	OutPath    string   // index file to write atomically
 	TempDir    string   // scratch dir for spill files; "" = os.MkdirTemp
 	Partitions int      // 0 = 256
-	Log        func(format string, args ...any)
+	// Workers bounds how many partitions are counted concurrently in pass 2.
+	// 0 = runtime.NumCPU(). Peak memory is roughly Workers × (corpus/Partitions),
+	// so lower it on memory-constrained machines (raise Partitions instead to
+	// shrink each chunk).
+	Workers int
+	Log     func(format string, args ...any)
 }
 
 // maxSources bounds the per-file bitmask (uint8) used in passes 2 and 3.
@@ -95,41 +102,32 @@ func Build(ctx context.Context, opts BuildOptions) (*IndexMeta, error) {
 	logf("pass1 done in %s", time.Since(start).Round(time.Millisecond))
 
 	// ---- pass 2: count per partition ------------------------------------
+	// Partitions are independent by construction (equal hashes always land in
+	// the same one), so they are counted concurrently. Results are collected
+	// per partition and merged in index order, keeping output deterministic.
 	p2start := time.Now()
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = runtime.NumCPU()
+	}
+	perPartition := make([][]uint64, parts)
+	if err := forEachPartition(ctx, parts, workers, func(p int) error {
+		found, err := countPartition(len(opts.Sources), tempDir, p)
+		if err != nil {
+			return fmt.Errorf("pass 2 partition %d: %w", p, err)
+		}
+		perPartition[p] = found
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	var candidates []uint64
-	for p := 0; p < parts; p++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		type entry struct {
-			h   uint64
-			src uint8
-		}
-		var entries []entry
-		for src := range opts.Sources {
-			hashes, err := readSpill(spillPath(tempDir, src, p))
-			if err != nil {
-				return nil, fmt.Errorf("pass 2 partition %d: %w", p, err)
-			}
-			for _, h := range hashes {
-				entries = append(entries, entry{h, uint8(src)})
-			}
-		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].h < entries[j].h })
-		for i := 0; i < len(entries); {
-			j, mask := i, uint8(0)
-			for j < len(entries) && entries[j].h == entries[i].h {
-				mask |= 1 << entries[j].src // dedup-per-file is free: same bit
-				j++
-			}
-			if bits.OnesCount8(mask) >= 2 {
-				candidates = append(candidates, entries[i].h)
-			}
-			i = j
-		}
+	for _, part := range perPartition {
+		candidates = append(candidates, part...)
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
-	logf("pass2 done in %s: %d candidate hashes", time.Since(p2start).Round(time.Millisecond), len(candidates))
+	logf("pass2 done in %s (%d workers): %d candidate hashes",
+		time.Since(p2start).Round(time.Millisecond), workers, len(candidates))
 
 	// ---- pass 3: verify with exact strings -------------------------------
 	p3start := time.Now()
@@ -198,6 +196,87 @@ func forEachSource(ctx context.Context, sources []string, fn func(i int, path st
 		return firstErr
 	}
 	return ctx.Err()
+}
+
+// forEachPartition runs fn for every partition across a bounded worker pool,
+// returning the first error. Workers pull the next partition index off a
+// shared counter, so uneven partitions self-balance.
+func forEachPartition(ctx context.Context, parts, workers int, fn func(p int) error) error {
+	if workers > parts {
+		workers = parts
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	var (
+		next     atomic.Int64
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				p := int(next.Add(1)) - 1
+				if p >= parts || ctx.Err() != nil {
+					return
+				}
+				if err := fn(p); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
+}
+
+// countPartition loads one partition's spilled hashes from every source and
+// returns the hashes present in at least two distinct sources.
+//
+// The per-file bitmask is where the "found in ≥2 files" rule lives: OR-ing the
+// same source bit repeatedly is idempotent, so a code repeated within a single
+// file still counts once — per-file dedup costs nothing.
+func countPartition(numSources int, tempDir string, p int) ([]uint64, error) {
+	type entry struct {
+		h   uint64
+		src uint8
+	}
+	var entries []entry
+	for src := 0; src < numSources; src++ {
+		hashes, err := readSpill(spillPath(tempDir, src, p))
+		if err != nil {
+			return nil, err
+		}
+		for _, h := range hashes {
+			entries = append(entries, entry{h, uint8(src)})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].h < entries[j].h })
+
+	var out []uint64
+	for i := 0; i < len(entries); {
+		j, mask := i, uint8(0)
+		for j < len(entries) && entries[j].h == entries[i].h {
+			mask |= 1 << entries[j].src
+			j++
+		}
+		if bits.OnesCount8(mask) >= 2 {
+			out = append(out, entries[i].h)
+		}
+		i = j
+	}
+	return out, nil
 }
 
 func spillPath(dir string, src, part int) string {

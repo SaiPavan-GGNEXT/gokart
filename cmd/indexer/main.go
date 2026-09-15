@@ -23,6 +23,8 @@ func main() {
 	out := flag.String("out", "data/coupons.idx", "output index path")
 	tmp := flag.String("tmp", "", "scratch directory for spill files (default: system temp)")
 	printCodes := flag.Bool("print", false, "print the final valid codes to stdout")
+	workers := flag.Int("workers", 0,
+		"partitions counted concurrently in pass 2 (0 = NumCPU; lower it to cap memory)")
 	flag.Parse()
 
 	sources := flag.Args()
@@ -39,6 +41,7 @@ func main() {
 		Sources: sources,
 		OutPath: *out,
 		TempDir: *tmp,
+		Workers: *workers,
 		Log:     logger.Printf,
 	})
 	if err != nil {
