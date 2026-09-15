@@ -21,7 +21,7 @@ instead:
 ```
 BUILD TIME (once per corpus)                     REQUEST TIME (every order)
 couponbase{1,2,3}.gz ──► cmd/indexer ──► coupons.idx ──► loaded at startup ──► 18ns lookup
-   3.1 GB raw               ~66 s           736 B            once                 0 allocs
+   3.1 GB raw               ~28 s           736 B            once                 0 allocs
 ```
 
 ## Measured numbers (Apple M4 Pro, 14 cores; reproducible via `make index`)
@@ -29,7 +29,7 @@ couponbase{1,2,3}.gz ──► cmd/indexer ──► coupons.idx ──► loade
 | Metric | Value |
 |---|---|
 | Corpus | 313,064,705 lines, 2.1 GB gz / ~3.1 GB raw |
-| Full index build | **65.7 s** (pass 1: 11.6 s, pass 2: 41.4 s, pass 3: 12.7 s) |
+| Full index build | **28.4 s** (pass 1: 11.4 s, pass 2: 4.4 s on 14 workers, pass 3: 12.7 s) |
 | Streaming throughput | 12.1 M lines/s/core (83 ns/line) |
 | Valid codes found | **8** (exactly; verified two independent ways) |
 | Index artifact | **736 bytes** |
@@ -69,6 +69,36 @@ Records are globally sorted; lookup is a zero-parse binary search.
 
 **One `normalize()`** is shared by the indexer (passes 1 & 3) and the API
 request path, so the two can never disagree about what a code is.
+
+### Complexity, and where the time actually goes
+
+Time is **O(N·log(N/P))** — three linear streams over N lines, plus a
+comparison sort inside each of the P partitions. Memory is **O(N/P per
+worker)**, independent of corpus size. The lower bound for this problem is
+Ω(N): every line must be examined, since any skipped line could be a valid
+code. The log factor is the per-partition sort; an LSD radix sort over the
+7 non-partition bytes would remove it, and is the obvious next optimization.
+
+The measured bottleneck, though, was not asymptotic. Pass 2 originally
+walked the 256 partitions sequentially — **41.4 s of a 65.7 s build on one
+core** — while the whole design premise is that partitions are independent.
+Counting them across a worker pool (`forEachPartition`, work-stealing off an
+atomic counter) took pass 2 to **4.4 s**, and the total build from **65.7 s
+to 28.4 s**, with byte-identical output (same CRC, same 8 codes) because
+results are merged in partition order. Memory scales with `Workers ×
+(corpus/Partitions)`, so both are tunable: `-workers` caps concurrency on
+small machines, more partitions shrink each chunk.
+
+What remains is close to irreducible on one box: passes 1 and 3 (24 s of the
+28 s) are gzip-decompression bound, and a single gzip stream cannot be
+parallelized without a block index.
+
+**Why pass 3 exists at all** — a 128-bit hash would make collisions
+(~10⁻²² across 313M items) negligible and let the answer be emitted straight
+from pass 2, saving a full re-read. That trade was declined deliberately:
+12 s of offline batch time buys *provable* exactness rather than
+overwhelmingly-probable exactness, on the code path that decides whether
+money moves.
 
 ## Why not X — the alternatives, honestly
 
