@@ -63,9 +63,9 @@ spec served at `/openapi.yaml`.
 
 † **Extension beyond the spec** (the assignment invites additional APIs):
 catalog insertion, used for seeding — `make seed` inserts the default catalog
-*through this endpoint* (`scripts/seed_products.py`). At startup the server
-also auto-seeds an empty catalog (`SEED_PRODUCTS=true` default), since the
-assignment ships no product data and the demo server is offline.
+*through this endpoint* (`cmd/seedproducts`, a small Go client). At startup
+the server also auto-seeds an empty catalog (`SEED_PRODUCTS=true` default),
+since the assignment ships no product data and the demo server is offline.
 
 **API keys** (config `API_KEYS`, JSON): default grants `apitest` both scopes
 (the spec's documented key), plus scope-less `apitest_noscope` so 403 is
@@ -153,6 +153,7 @@ request path, so they cannot disagree.
 cmd/server        API entrypoint (fail-fast wiring, graceful shutdown, -healthcheck)
 cmd/indexer       offline corpus → index builder (the scale story)
 cmd/seedredis     loads the built index into Redis (VALIDATOR=redis)
+cmd/seedproducts  inserts the catalog via the public POST /api/product endpoint
 internal/coupon   normalize, index format, 3-pass builder, validators
 internal/api      Fiber router, middleware (auth/scopes, logging), handlers
 internal/service  business rules (error taxonomy, batched lookups)
