@@ -14,7 +14,7 @@ trade-offs: [docs/DESIGN.md](docs/DESIGN.md).
 ```
 BUILD TIME (once per corpus)                    REQUEST TIME (every order)
 couponbase{1,2,3}.gz ─► cmd/indexer ─► coupons.idx ─► loaded at startup ─► binary search
-  3.1 GB, 313M lines       ~28 s          736 B          verified, once      18 ns, exact
+  3.1 GB, 313M lines       ~16 s          736 B          verified, once      18 ns, exact
 ```
 
 ## Quick start (no downloads, real validation)
@@ -36,7 +36,7 @@ curl -X POST localhost:8080/api/order \
 ```
 
 Verify the index yourself anytime: `make corpus && make index` (downloads
-2.1 GB, rebuilds in ~30 s, prints per-file stats + sha256s).
+2.1 GB, rebuilds in ~16 s, prints per-file stats + sha256s).
 
 Variants (extensibility seams, live):
 
@@ -154,7 +154,7 @@ cmd/server        API entrypoint (fail-fast wiring, graceful shutdown, -healthch
 cmd/indexer       offline corpus → index builder (the scale story)
 cmd/seedredis     loads the built index into Redis (VALIDATOR=redis)
 cmd/seedproducts  inserts the catalog via the public POST /api/product endpoint
-internal/coupon   normalize, index format, 3-pass builder, validators
+internal/coupon   normalize, index format, 2-pass builder, validators
 internal/api      Fiber router, middleware (auth/scopes, logging), handlers
 internal/service  business rules (error taxonomy, batched lookups)
 internal/store    interfaces + memory & postgres implementations

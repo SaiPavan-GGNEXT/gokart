@@ -21,7 +21,7 @@ instead:
 ```
 BUILD TIME (once per corpus)                     REQUEST TIME (every order)
 couponbase{1,2,3}.gz ──► cmd/indexer ──► coupons.idx ──► loaded at startup ──► 18ns lookup
-   3.1 GB raw               ~28 s           736 B            once                 0 allocs
+   3.1 GB raw               ~16 s           736 B            once                 0 allocs
 ```
 
 ## Measured numbers (Apple M4 Pro, 14 cores; reproducible via `make index`)
@@ -29,28 +29,29 @@ couponbase{1,2,3}.gz ──► cmd/indexer ──► coupons.idx ──► loade
 | Metric | Value |
 |---|---|
 | Corpus | 313,064,705 lines, 2.1 GB gz / ~3.1 GB raw |
-| Full index build | **28.4 s** (pass 1: 11.4 s, pass 2: 4.4 s on 14 workers, pass 3: 12.7 s) |
+| Full index build | **16.2 s** (pass 1: 11.5 s — gzip-bound; pass 2: 4.6 s on 14 workers) |
 | Streaming throughput | 12.1 M lines/s/core (83 ns/line) |
 | Valid codes found | **8** (exactly; verified two independent ways) |
 | Index artifact | **736 bytes** |
 | Runtime lookup | **18.3 ns/op, 0 allocs** (`make bench`) |
 | Server RAM for coupons | ~1 KB |
 
-## The 3-pass indexer (`internal/coupon/builder.go`)
+## The 2-pass indexer (`internal/coupon/builder.go`)
 
 1. **Scatter** — stream each gz (constant memory), `normalize()` every line
-   (trim; 8–10 bytes; `[A-Z0-9]` only), hash survivors (FNV-1a 64), append the
-   hash to 1 of 256 partition spill files routed by the hash's top byte.
-   Same code ⇒ same hash ⇒ same partition, from any file — so cross-file
-   matching never needs more than 1/256 of the data in memory.
-2. **Count** — per partition: bitmask per hash of which files contain it
-   (a code appearing twice in one file sets the same bit — the "counts once
-   per file" rule falls out of the representation). Popcount ≥ 2 ⇒ candidate.
-3. **Verify** — hashes can collide, and coupons are money, so candidates are
-   re-resolved to **exact strings** by re-streaming the corpus; the ≥2-files
-   rule is re-applied on real strings. A pass-1 collision can only *add* a
-   candidate (superset), and pass 3 removes every false one — the result is
-   **provably exact, not probabilistic**.
+   (trim; 8–10 bytes; `[A-Z0-9]` only), and spill **the code itself** as a
+   fixed-width NUL-padded 10-byte record into 1 of 256 partition files,
+   routed by the top byte of the code's FNV-1a hash. Same code ⇒ same hash ⇒
+   same partition, from any file — so cross-file matching never needs more
+   than 1/256 of the data in memory. The hash is used *only* for routing;
+   a hash collision merely co-locates two different codes in one partition,
+   where the byte-wise comparison still tells them apart.
+2. **Count** — per partition (concurrently across a worker pool): sort the
+   records from all files, then OR a per-file bit across each run of equal
+   codes (a code appearing twice in one file sets the same bit — the "counts
+   once per file" rule falls out of the representation). Popcount ≥ 2 ⇒ the
+   code is valid — as an **exact string, by construction**. No probabilistic
+   structure exists anywhere in the pipeline.
 
 **Failure policy: abort on any read error.** All 8 valid codes physically sit
 in the *last lines* of their files. A truncated download that is silently
@@ -67,38 +68,49 @@ exist. `TestBuildFailsOnTruncatedGzip` locks this in.
 10-char input `OVER900000` — a false accept; `TestIndexPaddingUnambiguous`).
 Records are globally sorted; lookup is a zero-parse binary search.
 
-**One `normalize()`** is shared by the indexer (passes 1 & 3) and the API
-request path, so the two can never disagree about what a code is.
+**One `normalize()`** is shared by the indexer and the API request path, so
+the two can never disagree about what a code is.
 
-### Complexity, and where the time actually goes
+### Complexity, optimality, and the measured evolution
 
-Time is **O(N·log(N/P))** — three linear streams over N lines, plus a
-comparison sort inside each of the P partitions. Memory is **O(N/P per
-worker)**, independent of corpus size. The lower bound for this problem is
-Ω(N): every line must be examined, since any skipped line could be a valid
-code. The log factor is the per-partition sort; an LSD radix sort over the
-7 non-partition bytes would remove it, and is the obvious next optimization.
+Time is **O(N·log(N/P))** — a linear scatter over N lines plus a comparison
+sort inside each of the P partitions. Memory is **O(Workers × N/P)**,
+independent of corpus size. The lower bound for the problem is **Ω(N)**:
+every line must be examined (any skipped line could be a valid code), and
+gzip input additionally forces decompressing every byte — ~11.5 s on this
+machine, which is the physical floor. The remaining log factor is the
+per-partition sort; an LSD radix sort over the record bytes would remove it,
+worth ≲3 s and noted as the next step rather than taken.
 
-The measured bottleneck, though, was not asymptotic. Pass 2 originally
-walked the 256 partitions sequentially — **41.4 s of a 65.7 s build on one
-core** — while the whole design premise is that partitions are independent.
-Counting them across a worker pool (`forEachPartition`, work-stealing off an
-atomic counter) took pass 2 to **4.4 s**, and the total build from **65.7 s
-to 28.4 s**, with byte-identical output (same CRC, same 8 codes) because
-results are merged in partition order. Memory scales with `Workers ×
-(corpus/Partitions)`, so both are tunable: `-workers` caps concurrency on
-small machines, more partitions shrink each chunk.
+The pipeline got here in three measured steps, each verified to produce a
+byte-identical index (same CRC-32, same 8 codes):
 
-What remains is close to irreducible on one box: passes 1 and 3 (24 s of the
-28 s) are gzip-decompression bound, and a single gzip stream cannot be
-parallelized without a block index.
+| Version | Pipeline | Full-corpus build |
+|---|---|---|
+| v1 | 3 passes (hash-scatter → count → string-verify), sequential pass 2 | 65.7 s |
+| v1.1 | pass 2 parallelized across a worker pool (14 workers) | 28.4 s |
+| **v2 (current)** | **2 passes: scatter the codes themselves; count exact strings** | **16.2 s** |
 
-**Why pass 3 exists at all** — a 128-bit hash would make collisions
-(~10⁻²² across 313M items) negligible and let the answer be emitted straight
-from pass 2, saving a full re-read. That trade was declined deliberately:
-12 s of offline batch time buys *provable* exactness rather than
-overwhelmingly-probable exactness, on the code path that decides whether
-money moves.
+The v1→v1.1 lesson was about hardware: the 256 partitions are independent by
+construction, yet were counted on one core — 41 s of the build with 13 cores
+idle. `forEachPartition` (work-stealing off an atomic counter, results merged
+in partition order for determinism) fixed that.
+
+The v1.1→v2 lesson was about design: v1 spilled 8-byte *hashes* to save
+~600 MB of scratch disk, which forced a third full pass — 12.7 s of repeated
+gzip decompression — to resolve candidate hashes back to exact strings and
+rule out collisions. Spilling the 10-byte *code itself* makes the count exact
+by construction: the collision question disappears rather than being
+answered, an entire pass is deleted, and the algorithm is *simpler* than the
+one it replaced. Cost: ~25 % more temp disk (3.1 GB vs 2.5 GB, deleted after
+the build). Records are packed as big-endian (uint64, uint16) pairs so the
+per-partition sort runs on integer comparisons while preserving byte order.
+
+After v2, ~11.5 s of the 16.2 s is gzip decompression — within ~5 s of the
+Ω-floor for this input format. Going lower means changing the input, not the
+algorithm: block-indexed compression (bgzf/`pigz -i`) or zstd would allow
+parallel decompression; a machine with ~32 GB free RAM could instead use a
+single hash map in one pass. Both are corpus-pipeline decisions, not code.
 
 ## Why not X — the alternatives, honestly
 

@@ -2,6 +2,7 @@ package coupon
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -21,17 +22,28 @@ import (
 
 // Build reduces the raw coupon corpus (N gzipped code-per-line files) to the
 // exact set of codes present in at least two distinct files, and writes it as
-// an index file. Three passes, flat memory regardless of corpus size:
+// an index file. Two passes, flat memory regardless of corpus size:
 //
-//	pass 1  stream each file → Normalize → FNV-1a 64 → scatter hashes into
-//	        per-(file,partition) spill files on disk (top byte = partition)
-//	pass 2  per partition: dedup hashes per file, keep hashes seen in ≥2
-//	        files → candidate hashes (a strict superset of the truth)
-//	pass 3  re-stream files, resolve candidate hashes to actual strings,
-//	        keep strings truly present in ≥2 files → exact final set
+//	pass 1  stream each file → Normalize → spill the code itself as a
+//	        fixed-width NUL-padded record into a per-(file,partition) spill
+//	        file on disk, routed by the top byte of the code's hash. Equal
+//	        codes hash equally, so all copies of a code — from any file —
+//	        land in the same partition.
+//	pass 2  per partition (concurrently): sort the records from all files,
+//	        OR a per-file bit for each run of equal codes; popcount ≥ 2 is
+//	        the "found in at least two files" rule. Emit the code string.
 //
-// Hash collisions can only ever ADD candidates in pass 2; pass 3 decides on
-// exact strings, so the output is provably exact, not probabilistic.
+// Because the records ARE the codes (not hashes of them), the result is
+// exact by construction — there is no collision case to reason about and no
+// verification pass. The hash is used only to route records to partitions;
+// a collision there merely co-locates two different codes in one partition,
+// where the byte-wise sort still tells them apart.
+//
+// (Design note: v1 spilled 8-byte hashes instead of 10-byte codes to save
+// ~600 MB of scratch disk, which forced a third full corpus pass to resolve
+// candidate hashes back to exact strings. Spilling the code itself deletes
+// that pass — and its 12.7 s of gzip decompression — for 25% more temp disk.
+// See docs/DESIGN.md for the evolution and measurements.)
 //
 // ANY read error — truncated gzip, CRC failure, I/O fault — aborts the whole
 // build. A partial corpus must never produce a plausible-looking index.
@@ -48,12 +60,12 @@ type BuildOptions struct {
 	Log     func(format string, args ...any)
 }
 
-// maxSources bounds the per-file bitmask (uint8) used in passes 2 and 3.
+// maxSources bounds the per-file bitmask (uint8) used in pass 2.
 const maxSources = 8
 
-// spillFlushCodes is how many hashes buffer in RAM per (file,partition)
-// before appending to the spill file: 32Ki × 8 B × 256 parts ≈ 64 MiB/file.
-const spillFlushCodes = 32 * 1024
+// spillFlushRecords is how many codes buffer in RAM per (file,partition)
+// before appending to the spill file: 16Ki × 10 B × 256 parts ≈ 40 MiB/file.
+const spillFlushRecords = 16 * 1024
 
 func Build(ctx context.Context, opts BuildOptions) (*IndexMeta, error) {
 	if len(opts.Sources) < 2 {
@@ -84,7 +96,7 @@ func Build(ctx context.Context, opts BuildOptions) (*IndexMeta, error) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	// ---- pass 1: scatter ------------------------------------------------
+	// ---- pass 1: scatter codes into partition spill files ----------------
 	start := time.Now()
 	sources := make([]SourceMeta, len(opts.Sources))
 	if err := forEachSource(ctx, opts.Sources, func(i int, path string) error {
@@ -101,8 +113,8 @@ func Build(ctx context.Context, opts BuildOptions) (*IndexMeta, error) {
 	}
 	logf("pass1 done in %s", time.Since(start).Round(time.Millisecond))
 
-	// ---- pass 2: count per partition ------------------------------------
-	// Partitions are independent by construction (equal hashes always land in
+	// ---- pass 2: count per partition, emit exact codes -------------------
+	// Partitions are independent by construction (equal codes always land in
 	// the same one), so they are counted concurrently. Results are collected
 	// per partition and merged in index order, keeping output deterministic.
 	p2start := time.Now()
@@ -110,7 +122,7 @@ func Build(ctx context.Context, opts BuildOptions) (*IndexMeta, error) {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
-	perPartition := make([][]uint64, parts)
+	perPartition := make([][]string, parts)
 	if err := forEachPartition(ctx, parts, workers, func(p int) error {
 		found, err := countPartition(len(opts.Sources), tempDir, p)
 		if err != nil {
@@ -121,46 +133,17 @@ func Build(ctx context.Context, opts BuildOptions) (*IndexMeta, error) {
 	}); err != nil {
 		return nil, err
 	}
-	var candidates []uint64
-	for _, part := range perPartition {
-		candidates = append(candidates, part...)
-	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
-	logf("pass2 done in %s (%d workers): %d candidate hashes",
-		time.Since(p2start).Round(time.Millisecond), workers, len(candidates))
-
-	// ---- pass 3: verify with exact strings -------------------------------
-	p3start := time.Now()
-	perSource := make([]map[string]struct{}, len(opts.Sources))
-	if err := forEachSource(ctx, opts.Sources, func(i int, path string) error {
-		found, err := resolveCandidates(ctx, path, candidates)
-		if err != nil {
-			return fmt.Errorf("pass 3 (%s): %w", filepath.Base(path), err)
-		}
-		perSource[i] = found
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	membership := map[string]uint8{}
-	for src, set := range perSource {
-		for code := range set {
-			membership[code] |= 1 << uint8(src)
-		}
-	}
 	var final []string
-	for code, mask := range membership {
-		if bits.OnesCount8(mask) >= 2 {
-			final = append(final, code)
-		}
+	for _, part := range perPartition {
+		final = append(final, part...)
 	}
 	sort.Strings(final)
-	logf("pass3 done in %s: %d exact valid codes", time.Since(p3start).Round(time.Millisecond), len(final))
+	logf("pass2 done in %s (%d workers): %d exact valid codes",
+		time.Since(p2start).Round(time.Millisecond), workers, len(final))
 
 	meta := IndexMeta{
 		BuiltAt:     time.Now().UTC(),
-		ToolVersion: "indexer/1.0",
+		ToolVersion: "indexer/2.0",
 		Sources:     sources,
 		CodeCount:   len(final),
 	}
@@ -241,38 +224,57 @@ func forEachPartition(ctx context.Context, parts, workers int, fn func(p int) er
 	return ctx.Err()
 }
 
-// countPartition loads one partition's spilled hashes from every source and
-// returns the hashes present in at least two distinct sources.
+// countPartition loads one partition's spilled records from every source and
+// returns the codes present in at least two distinct sources — exact strings,
+// decided by byte-wise comparison, so hash quality never affects the result.
 //
-// The per-file bitmask is where the "found in ≥2 files" rule lives: OR-ing the
-// same source bit repeatedly is idempotent, so a code repeated within a single
-// file still counts once — per-file dedup costs nothing.
-func countPartition(numSources int, tempDir string, p int) ([]uint64, error) {
-	type entry struct {
-		h   uint64
+// Records are packed as (hi uint64, lo uint16) big-endian so the sort runs on
+// two integer comparisons instead of a bytes.Compare; big-endian preserves
+// byte-wise ordering, and NUL padding round-trips (a code can never contain
+// NUL — Normalize enforces the alphabet).
+//
+// The per-file bitmask is where the "found in ≥2 files" rule lives: OR-ing
+// the same source bit repeatedly is idempotent, so a code repeated within a
+// single file still counts once — per-file dedup costs nothing.
+func countPartition(numSources int, tempDir string, p int) ([]string, error) {
+	type rec struct {
+		hi  uint64
+		lo  uint16
 		src uint8
 	}
-	var entries []entry
+	var recs []rec
 	for src := 0; src < numSources; src++ {
-		hashes, err := readSpill(spillPath(tempDir, src, p))
+		b, err := readSpill(spillPath(tempDir, src, p))
 		if err != nil {
 			return nil, err
 		}
-		for _, h := range hashes {
-			entries = append(entries, entry{h, uint8(src)})
+		for i := 0; i+recordSize <= len(b); i += recordSize {
+			recs = append(recs, rec{
+				hi:  binary.BigEndian.Uint64(b[i : i+8]),
+				lo:  binary.BigEndian.Uint16(b[i+8 : i+10]),
+				src: uint8(src),
+			})
 		}
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].h < entries[j].h })
+	sort.Slice(recs, func(i, j int) bool {
+		if recs[i].hi != recs[j].hi {
+			return recs[i].hi < recs[j].hi
+		}
+		return recs[i].lo < recs[j].lo
+	})
 
-	var out []uint64
-	for i := 0; i < len(entries); {
+	var out []string
+	for i := 0; i < len(recs); {
 		j, mask := i, uint8(0)
-		for j < len(entries) && entries[j].h == entries[i].h {
-			mask |= 1 << entries[j].src
+		for j < len(recs) && recs[j].hi == recs[i].hi && recs[j].lo == recs[i].lo {
+			mask |= 1 << recs[j].src
 			j++
 		}
 		if bits.OnesCount8(mask) >= 2 {
-			out = append(out, entries[i].h)
+			var code [recordSize]byte
+			binary.BigEndian.PutUint64(code[:8], recs[i].hi)
+			binary.BigEndian.PutUint16(code[8:10], recs[i].lo)
+			out = append(out, string(bytes.TrimRight(code[:], "\x00")))
 		}
 		i = j
 	}
@@ -283,15 +285,16 @@ func spillPath(dir string, src, part int) string {
 	return filepath.Join(dir, fmt.Sprintf("s%d_p%03d.bin", src, part))
 }
 
-// scatterFile streams one gzipped source, hashing every normalized code into
-// partition spill files, while fingerprinting the compressed bytes (sha256).
+// scatterFile streams one gzipped source, spilling every normalized code as
+// a fixed-width record into partition files, while fingerprinting the
+// compressed bytes (sha256).
 func scatterFile(ctx context.Context, path string, src, parts int, tempDir string) (*SourceMeta, error) {
 	meta := &SourceMeta{Name: filepath.Base(path)}
 
 	shaw := sha256.New()
-	bufs := make([][]uint64, parts)
+	bufs := make([][]byte, parts)
 	for i := range bufs {
-		bufs[i] = make([]uint64, 0, spillFlushCodes)
+		bufs[i] = make([]byte, 0, spillFlushRecords*recordSize)
 	}
 	flush := func(p int) error {
 		if len(bufs[p]) == 0 {
@@ -312,10 +315,11 @@ func scatterFile(ctx context.Context, path string, src, parts int, tempDir strin
 			return nil
 		}
 		meta.KeptLines++
-		h := fnv1a64(code)
-		p := int(h>>56) % parts
-		bufs[p] = append(bufs[p], h)
-		if len(bufs[p]) >= spillFlushCodes {
+		p := int(fnv1a64(code)>>56) % parts
+		var rec [recordSize]byte
+		copy(rec[:], code) // remaining bytes stay 0x00 — same padding as the index
+		bufs[p] = append(bufs[p], rec[:]...)
+		if len(bufs[p]) >= spillFlushRecords*recordSize {
 			return flush(p)
 		}
 		return nil
@@ -336,28 +340,6 @@ func scatterFile(ctx context.Context, path string, src, parts int, tempDir strin
 	meta.Bytes = fi.Size()
 	meta.SHA256 = hex.EncodeToString(shaw.Sum(nil))
 	return meta, nil
-}
-
-// resolveCandidates re-streams one source and returns the set of normalized
-// codes whose hash is in the sorted candidates slice.
-func resolveCandidates(ctx context.Context, path string, candidates []uint64) (map[string]struct{}, error) {
-	found := map[string]struct{}{}
-	err := streamLines(ctx, path, io.Discard, func(line []byte) error {
-		code, ok := Normalize(string(line))
-		if !ok {
-			return nil
-		}
-		h := fnv1a64(code)
-		i := sort.Search(len(candidates), func(i int) bool { return candidates[i] >= h })
-		if i < len(candidates) && candidates[i] == h {
-			found[code] = struct{}{}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return found, nil
 }
 
 // streamLines feeds every newline-delimited line of a gzipped file to fn,
@@ -436,14 +418,10 @@ func drainTail(gz *gzip.Reader, tee io.Reader) error {
 	return nil
 }
 
-func appendSpill(path string, hashes []uint64) error {
+func appendSpill(path string, buf []byte) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
-	}
-	buf := make([]byte, len(hashes)*8)
-	for i, h := range hashes {
-		binary.LittleEndian.PutUint64(buf[i*8:], h)
 	}
 	if _, err := f.Write(buf); err != nil {
 		f.Close()
@@ -452,20 +430,16 @@ func appendSpill(path string, hashes []uint64) error {
 	return f.Close()
 }
 
-func readSpill(path string) ([]uint64, error) {
+func readSpill(path string) ([]byte, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, nil // partition never received a hash — legitimately empty
+		return nil, nil // partition never received a record — legitimately empty
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(b)%8 != 0 {
+	if len(b)%recordSize != 0 {
 		return nil, fmt.Errorf("spill %s: corrupt length %d", path, len(b))
 	}
-	out := make([]uint64, len(b)/8)
-	for i := range out {
-		out[i] = binary.LittleEndian.Uint64(b[i*8:])
-	}
-	return out, nil
+	return b, nil
 }
