@@ -43,6 +43,20 @@ Variants (extensibility seams, live):
 ```bash
 docker compose --profile postgres up   # durable order store (port 8082)
 docker compose --profile redis up      # Redis-backed validator (port 8081)
+docker compose --profile pipeline up   # live-update pipeline: MinIO object store (port 8083)
+```
+
+The `pipeline` profile demonstrates **live coupon updates with zero
+restarts**: the API serves its index from MinIO (S3-compatible, console at
+`:9001`, `kart`/`kart12345`) and polls it. Change the corpus → republish →
+every instance hot-swaps within seconds:
+
+```bash
+make index          # corpus changed? rebuild the 736-byte artifact (~16 s)
+make publish-index  # push to MinIO — the running API picks it up, no restart
+# or fully automated: watch the raw files and republish on change
+go run ./cmd/watcher -publish http://localhost:9000/coupons/index/coupons.idx \
+  data/couponbase1.gz data/couponbase2.gz data/couponbase3.gz
 ```
 
 ## API
@@ -155,6 +169,7 @@ cmd/server        API entrypoint (fail-fast wiring, graceful shutdown, -healthch
 cmd/indexer       offline corpus → index builder (the scale story)
 cmd/seedredis     loads the built index into Redis (VALIDATOR=redis)
 cmd/seedproducts  inserts the catalog via the public POST /api/product endpoint
+cmd/watcher       watches raw corpus (paths/URLs) → rebuilds → publishes; -once = cron payload
 internal/coupon   normalize, index format, 2-pass builder, validators
 internal/api      Fiber router, middleware (auth/scopes, logging), handlers
 internal/service  business rules (error taxonomy, batched lookups)

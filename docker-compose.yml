@@ -74,8 +74,10 @@ services:
       timeout: 3s
       retries: 10
 
-  # One-shot: create the bucket, publish the committed index, allow anonymous
-  # reads (the server fetches with a plain GET, exactly as it would from S3).
+  # One-shot: create the bucket, publish the committed index, and allow
+  # anonymous read+write. Reads let the server plain-GET the index (as it
+  # would from S3); writes let cmd/watcher plain-PUT rebuilt artifacts.
+  # DEMO ONLY — a real bucket uses credentials/presigned URLs for writes.
   seed-minio:
     image: quay.io/minio/mc:latest
     profiles: [pipeline]
@@ -88,7 +90,7 @@ services:
       sh -c "mc alias set local http://minio:9000 kart kart12345 &&
              mc mb -p local/coupons &&
              mc cp /seed/coupons.idx local/coupons/index/coupons.idx &&
-             mc anonymous set download local/coupons"
+             mc anonymous set public local/coupons"
 
   api-pipeline:
     build: .

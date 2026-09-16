@@ -20,3 +20,9 @@ every replica carries its own copy of the answer.
 For updates within seconds of an upload instead of a schedule, see
 [../aws/README.md](../aws/README.md) — the S3-event-driven variant of the
 same pipeline (including the torn-upload marker pattern).
+
+The CronJob's three containers can also be replaced by a single step:
+`/app/watcher -once -publish s3-presigned-or-internal-url raw-urls...` —
+`cmd/watcher` bundles fetch → build → publish with the torn-upload settle
+guard built in. Run it without `-once` as a long-lived sidecar Deployment
+for continuous watching instead of a schedule.

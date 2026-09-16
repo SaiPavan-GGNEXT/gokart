@@ -185,6 +185,23 @@ logged and the current index keeps serving — yesterday's verified truth
 beats an unverifiable update); **swaps are atomic** (`atomic.Pointer` —
 requests see old or new, never a mix, no locks on the lookup path).
 
+The trigger side is implemented too: **`cmd/watcher`** (a sidecar, never
+part of the serving process) fingerprints the raw sources — local paths by
+size+mtime, URLs by one HEAD each (ETag/Last-Modified/Length) — and on
+change waits a **settle window**, re-fingerprints, and only rebuilds once
+the set has stopped moving: a multi-file corpus upload is only consistent
+as a *set*, and uploads are not atomic across files (the torn-upload guard,
+`TestWatcherTornUploadGuard`). It then runs the exact 2-pass build and
+publishes by atomic rename (local) or HTTP PUT (S3/MinIO). `-once` makes
+the same binary the CronJob payload or an S3-event handler. Verified live
+end-to-end: touch a real corpus file → detect → settle → 16 s rebuild of
+313M lines → PUT to MinIO → serving API hot-swaps on its next poll, no
+restarts. Processing stays out of the serving process because serving
+needs megabytes and nanoseconds while rebuilds need gigabytes and seconds:
+fusing them sizes every replica for the batch job, multiplies rebuilds by
+the replica count (or demands leader election in a stateless service), and
+puts live traffic inside the batch blast radius.
+
 Why not process the raw files at pod startup or during `docker build`
 instead? Cadence mismatch: code changes often, the corpus changes rarely.
 Startup processing makes every replica pay download + build on every boot
