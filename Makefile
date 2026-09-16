@@ -45,8 +45,17 @@ up-redis: ## Run the Redis-validator variant (port 8081)
 up-postgres: ## Run the Postgres-store variant (port 8082)
 	docker compose --profile postgres up --build -d
 
+up-pipeline: ## Run the live-update variant: MinIO object store + polling API (port 8083)
+	docker compose --profile pipeline up --build -d
+
+publish-index: ## Push data/coupons.idx into the running MinIO — the API hot-swaps it within 15s
+	docker run --rm --network kart-challenge_default --entrypoint sh \
+	  -v "$(PWD)/data/coupons.idx:/new.idx:ro" quay.io/minio/mc:latest \
+	  -c "mc alias set local http://minio:9000 kart kart12345 >/dev/null && \
+	      mc cp /new.idx local/coupons/index/coupons.idx"
+
 down:
-	docker compose --profile redis --profile postgres down
+	docker compose --profile redis --profile postgres --profile pipeline down
 
 fmt:
 	gofmt -l -w .
