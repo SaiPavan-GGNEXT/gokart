@@ -26,6 +26,7 @@ import (
 	"github.com/SaiPavan-GGNEXT/gokart/internal/seed"
 	"github.com/SaiPavan-GGNEXT/gokart/internal/service"
 	"github.com/SaiPavan-GGNEXT/gokart/internal/store"
+	"github.com/SaiPavan-GGNEXT/gokart/internal/store/cached"
 	"github.com/SaiPavan-GGNEXT/gokart/internal/store/memory"
 	"github.com/SaiPavan-GGNEXT/gokart/internal/store/postgres"
 )
@@ -86,10 +87,14 @@ func run() error {
 			if err := validator.Healthy(ctx); err != nil {
 				return nil, fmt.Errorf("coupon validator: %w", err)
 			}
-			return map[string]any{
+			info := map[string]any{
 				"store":     cfg.Store,
 				"validator": validator.Info(),
-			}, nil
+			}
+			if s, ok := productStore.(interface{ SnapshotInfo() map[string]any }); ok {
+				info["catalog"] = s.SnapshotInfo()
+			}
+			return info, nil
 		},
 	}
 	app := api.New(cfg, deps)
@@ -122,13 +127,23 @@ type productSeeder interface {
 func buildStores(ctx context.Context, cfg *config.Config) (store.ProductStore, store.OrderStore, func(), error) {
 	switch cfg.Store {
 	case "postgres":
-		pg, err := postgres.Connect(ctx, cfg.DatabaseURL)
+		pg, err := postgres.Connect(ctx, cfg.DatabaseURL, cfg.DatabaseReplicaURL)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf(
 				"connecting to postgres (set STORE=memory to run without a database): %w", err)
 		}
-		slog.Info("store ready", "store", "postgres")
-		return pg, pg.Orders(), pg.Close, nil
+		var products store.ProductStore = pg
+		if cfg.CatalogRefreshInterval > 0 {
+			c, err := cached.New(ctx, pg, cfg.CatalogRefreshInterval)
+			if err != nil {
+				pg.Close()
+				return nil, nil, nil, err
+			}
+			products = c
+		}
+		slog.Info("store ready", "store", "postgres",
+			"topology", pg.Topology(), "catalog_cache", cfg.CatalogRefreshInterval.String())
+		return products, pg.Orders(), pg.Close, nil
 	default: // "memory" — validated by config.Load
 		slog.Info("store ready", "store", "memory",
 			"note", "orders do not survive restarts; STORE=postgres for durability")

@@ -54,6 +54,9 @@ prewarm-corpus: ## Download + sha256-verify the corpus into the livebuild volume
 up-livebuild: ## LIVE artifact creation: fetch corpus → build index on screen → serve it (port 8084)
 	docker compose --profile livebuild up --build
 
+up-replica: ## Primary/replica postgres + catalog snapshot cache (port 8085)
+	docker compose --profile replica up --build -d
+
 publish-index: ## Push data/coupons.idx into the running MinIO — the API hot-swaps it within 15s
 	docker run --rm --network kart-challenge_default --entrypoint sh \
 	  -v "$(PWD)/data/coupons.idx:/new.idx:ro" quay.io/minio/mc:latest \
@@ -61,7 +64,7 @@ publish-index: ## Push data/coupons.idx into the running MinIO — the API hot-s
 	      mc cp /new.idx local/coupons/index/coupons.idx"
 
 down:
-	docker compose --profile redis --profile postgres --profile pipeline --profile livebuild down
+	docker compose --profile redis --profile postgres --profile pipeline --profile livebuild --profile replica down
 
 fmt:
 	gofmt -l -w .

@@ -18,11 +18,19 @@ const (
 
 // Config is the fully resolved server configuration.
 type Config struct {
-	Port            string
-	Store           string // "memory" | "postgres"
-	DatabaseURL     string
-	Validator       string // "index" | "redis" | "static" (static is test-only and must be explicit)
-	CouponIndexPath string // local path, or http(s):// URL (e.g. an S3 object)
+	Port        string
+	Store       string // "memory" | "postgres"
+	DatabaseURL string // primary: all writes + schema
+	// DatabaseReplicaURL: optional read replica(s), comma-separated. Catalog
+	// reads round-robin over these; writes and order transactions always use
+	// the primary. Empty = single-node (reads share the primary pool).
+	DatabaseReplicaURL string
+	// CatalogRefreshInterval: with STORE=postgres, products are served from an
+	// in-memory snapshot refreshed on this cadence (0 disables the cache and
+	// reads hit the database per request).
+	CatalogRefreshInterval time.Duration
+	Validator              string // "index" | "redis" | "static" (static is test-only and must be explicit)
+	CouponIndexPath        string // local path, or http(s):// URL (e.g. an S3 object)
 	// CouponReloadInterval, when >0 and CouponIndexPath is a URL, polls the
 	// URL and hot-swaps the index on change — live corpus updates without
 	// restarts. 0 disables polling (fetch once at startup).
@@ -48,23 +56,25 @@ const defaultAPIKeys = `{"apitest":["create_order","manage_products"],"apitest_n
 // Load reads configuration from the environment.
 func Load() (*Config, error) {
 	c := &Config{
-		Port:                 getenv("PORT", "8080"),
-		Store:                getenv("STORE", "memory"),
-		DatabaseURL:          os.Getenv("DATABASE_URL"),
-		Validator:            getenv("VALIDATOR", "index"),
-		CouponIndexPath:      getenv("COUPON_INDEX", "data/coupons.idx"),
-		CouponReloadInterval: getenvDur("COUPON_RELOAD_INTERVAL", 0),
-		RedisAddr:            getenv("REDIS_ADDR", "localhost:6379"),
-		RedisKey:             getenv("REDIS_KEY", "coupons:valid"),
-		SeedProducts:         getenvBool("SEED_PRODUCTS", true),
-		BodyLimitBytes:       getenvInt("BODY_LIMIT_BYTES", 1<<20), // 1 MiB
-		RateLimitRPM:         getenvInt("RATE_LIMIT_RPM", 300),
-		CORSOrigins:          getenv("CORS_ORIGINS", "*"),
-		ReadTimeout:          getenvDur("READ_TIMEOUT", 10*time.Second),
-		WriteTimeout:         getenvDur("WRITE_TIMEOUT", 10*time.Second),
-		IdleTimeout:          getenvDur("IDLE_TIMEOUT", 60*time.Second),
-		ShutdownTimeout:      getenvDur("SHUTDOWN_TIMEOUT", 10*time.Second),
-		Env:                  getenv("ENV", "dev"),
+		Port:                   getenv("PORT", "8080"),
+		Store:                  getenv("STORE", "memory"),
+		DatabaseURL:            os.Getenv("DATABASE_URL"),
+		DatabaseReplicaURL:     os.Getenv("DATABASE_REPLICA_URL"),
+		CatalogRefreshInterval: getenvDur("CATALOG_REFRESH_INTERVAL", 2*time.Minute),
+		Validator:              getenv("VALIDATOR", "index"),
+		CouponIndexPath:        getenv("COUPON_INDEX", "data/coupons.idx"),
+		CouponReloadInterval:   getenvDur("COUPON_RELOAD_INTERVAL", 0),
+		RedisAddr:              getenv("REDIS_ADDR", "localhost:6379"),
+		RedisKey:               getenv("REDIS_KEY", "coupons:valid"),
+		SeedProducts:           getenvBool("SEED_PRODUCTS", true),
+		BodyLimitBytes:         getenvInt("BODY_LIMIT_BYTES", 1<<20), // 1 MiB
+		RateLimitRPM:           getenvInt("RATE_LIMIT_RPM", 300),
+		CORSOrigins:            getenv("CORS_ORIGINS", "*"),
+		ReadTimeout:            getenvDur("READ_TIMEOUT", 10*time.Second),
+		WriteTimeout:           getenvDur("WRITE_TIMEOUT", 10*time.Second),
+		IdleTimeout:            getenvDur("IDLE_TIMEOUT", 60*time.Second),
+		ShutdownTimeout:        getenvDur("SHUTDOWN_TIMEOUT", 10*time.Second),
+		Env:                    getenv("ENV", "dev"),
 	}
 
 	raw := getenv("API_KEYS", defaultAPIKeys)

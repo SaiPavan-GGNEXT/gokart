@@ -112,6 +112,46 @@ algorithm: block-indexed compression (bgzf/`pigz -i`) or zstd would allow
 parallel decompression; a machine with ~32 GB free RAM could instead use a
 single hash map in one pass. Both are corpus-pipeline decisions, not code.
 
+## The catalog read path (implemented)
+
+The menu is the read-heavy surface, so it gets the same treatment as the
+coupon index — **the database is not on the read hot path**:
+
+```
+customer reads ──► pod-local snapshot (atomic.Pointer, zero I/O, lock-free)
+                        ▲ rebuilt every CATALOG_REFRESH_INTERVAL (default 2m)
+                        │ by a background refresher that reads from a REPLICA
+writes (POST /product, orders) ─────────────────────────► PRIMARY
+                                        └─ streaming replication ─► REPLICA(s)
+```
+
+Three cooperating pieces, each independently defensible:
+
+- **Snapshot cache** (`internal/store/cached`): refresh-ahead, so reads never
+  pay a cache-miss and refreshes can't stampede; a cheap fingerprint
+  (count + max id — the table is insert-only) skips reloads when nothing
+  changed; **write-through** gives read-your-writes on the writing instance;
+  **fail-static** keeps serving the last snapshot through a database outage.
+  Staleness is bounded by the interval — menu-appropriate. With N instances,
+  total DB read load is N fingerprint queries per interval, independent of
+  traffic. This is the repo's one data pattern a third time: immutable
+  snapshot + background refresh + atomic swap (coupon index, corpus watcher,
+  now catalog).
+- **Read/write split** (`internal/store/postgres`): reads round-robin over
+  `DATABASE_REPLICA_URL` pools; writes, order transactions, and schema
+  always use the primary. Unconfigured, both roles share one pool — zero
+  behavior change. Orders never read from replicas: money follows strong
+  consistency, menus tolerate eventual — per-data-type, never blanket.
+- **A real replication demo** (`docker compose --profile replica up`,
+  port 8085): postgres primary + streaming hot standby (pg_basebackup -R),
+  API wired to both. Verified end-to-end: a row inserted directly on the
+  primary via psql appears on the replica within a second and in the API
+  within one refresh tick — proving reads flow primary → replica →
+  snapshot. The demo also surfaced a genuine cold-boot race (the snapshot's
+  first load can query a fresh replica before the schema DDL replays —
+  "relation does not exist"), fixed with a bounded retry in the cache's
+  initial load. A mocked test would never have found it.
+
 ## Why not X — the alternatives, honestly
 
 **Why not scan the files per request?** 30–60 s and all cores per check.

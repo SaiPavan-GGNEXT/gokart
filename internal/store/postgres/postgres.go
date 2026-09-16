@@ -1,6 +1,14 @@
 // Package postgres implements the store interfaces on PostgreSQL via pgx.
 // Orders are written transactionally (order + items commit atomically);
 // product resolution is batched (one query, no N+1).
+//
+// Read/write split: writes always target the primary (DATABASE_URL); reads
+// go to read replicas (DATABASE_REPLICA_URL, comma-separated, round-robin)
+// when configured, protecting the primary from all read pressure. With no
+// replica configured, both roles share one pool — zero behavior change.
+// Replication is async, so replica reads are eventually consistent: fine
+// for the catalog (staleness-tolerant), which is why ORDER writes and their
+// transactional reads never touch replicas.
 package postgres
 
 import (
@@ -9,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,45 +31,111 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// Store bundles both interfaces over one connection pool.
+// Store bundles both interfaces over a primary pool and optional replicas.
 type Store struct {
-	pool *pgxpool.Pool
+	write *pgxpool.Pool   // primary: all writes, schema, transactions
+	reads []*pgxpool.Pool // replicas: catalog reads; empty = use primary
+	rr    atomic.Uint64   // round-robin cursor over reads
 }
 
-// Connect opens the pool, verifies connectivity, and applies the schema.
-func Connect(ctx context.Context, databaseURL string) (*Store, error) {
-	cfg, err := pgxpool.ParseConfig(databaseURL)
+// Connect opens the primary pool (verifying connectivity and applying the
+// schema there — replicas are read-only) plus a pool per replica URL.
+func Connect(ctx context.Context, databaseURL, replicaURLs string) (*Store, error) {
+	write, err := newPool(ctx, databaseURL, "DATABASE_URL")
 	if err != nil {
-		return nil, fmt.Errorf("postgres: parse DATABASE_URL: %w", err)
+		return nil, err
+	}
+	if _, err := write.Exec(ctx, schemaSQL); err != nil {
+		write.Close()
+		return nil, fmt.Errorf("postgres: applying schema: %w", err)
+	}
+
+	s := &Store{write: write}
+	for _, u := range strings.Split(replicaURLs, ",") {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
+		}
+		r, err := newPool(ctx, u, "DATABASE_REPLICA_URL")
+		if err != nil {
+			s.Close()
+			return nil, err
+		}
+		s.reads = append(s.reads, r)
+	}
+	return s, nil
+}
+
+func newPool(ctx context.Context, url, label string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: parse %s: %w", label, err)
 	}
 	cfg.MaxConns = 10
 	cfg.MaxConnLifetime = 30 * time.Minute
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("postgres: pool: %w", err)
+		return nil, fmt.Errorf("postgres: pool (%s): %w", label, err)
 	}
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("postgres: ping: %w", err)
+		return nil, fmt.Errorf("postgres: ping (%s): %w", label, err)
 	}
-	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("postgres: applying schema: %w", err)
-	}
-	return &Store{pool: pool}, nil
+	return pool, nil
 }
 
-func (s *Store) Close() { s.pool.Close() }
+// readPool picks a replica round-robin, or the primary when none exist.
+func (s *Store) readPool() *pgxpool.Pool {
+	if len(s.reads) == 0 {
+		return s.write
+	}
+	return s.reads[int(s.rr.Add(1))%len(s.reads)]
+}
 
-func (s *Store) Healthy(ctx context.Context) error { return s.pool.Ping(ctx) }
+func (s *Store) Close() {
+	s.write.Close()
+	for _, r := range s.reads {
+		r.Close()
+	}
+}
+
+func (s *Store) Healthy(ctx context.Context) error {
+	if err := s.write.Ping(ctx); err != nil {
+		return fmt.Errorf("primary: %w", err)
+	}
+	for i, r := range s.reads {
+		if err := r.Ping(ctx); err != nil {
+			return fmt.Errorf("replica %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Fingerprint is a cheap change-detector for the catalog (used by the
+// snapshot cache to skip full reloads): the table is insert-only, so
+// count + max id identify its state. Reads from a replica.
+func (s *Store) Fingerprint(ctx context.Context) (string, error) {
+	var count, maxID int64
+	err := s.readPool().QueryRow(ctx,
+		`SELECT count(*), coalesce(max(id), 0) FROM products`).Scan(&count, &maxID)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d|%d", count, maxID), nil
+}
+
+// Topology reports the pool layout for /readyz.
+func (s *Store) Topology() map[string]any {
+	return map[string]any{"primary": true, "read_replicas": len(s.reads)}
+}
 
 // --- ProductStore ---------------------------------------------------------
 
 func (s *Store) List(ctx context.Context) ([]domain.Product, error) {
-	rows, err := s.pool.Query(ctx,
+	rows, err := s.readPool().Query(ctx,
 		`SELECT id, name, price, category FROM products ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -81,7 +157,7 @@ func (s *Store) Get(ctx context.Context, id string) (*domain.Product, error) {
 	if err != nil {
 		return nil, store.ErrNotFound // non-numeric ids cannot exist here
 	}
-	row := s.pool.QueryRow(ctx,
+	row := s.readPool().QueryRow(ctx,
 		`SELECT id, name, price, category FROM products WHERE id = $1`, n)
 	p, err := scanProduct(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -104,7 +180,7 @@ func (s *Store) GetMany(ctx context.Context, ids []string) (map[string]domain.Pr
 	if len(nums) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx,
+	rows, err := s.readPool().Query(ctx,
 		`SELECT id, name, price, category FROM products WHERE id = ANY($1)`, nums)
 	if err != nil {
 		return nil, err
@@ -121,7 +197,7 @@ func (s *Store) GetMany(ctx context.Context, ids []string) (map[string]domain.Pr
 }
 
 func (s *Store) Create(ctx context.Context, np domain.NewProduct) (*domain.Product, error) {
-	row := s.pool.QueryRow(ctx,
+	row := s.write.QueryRow(ctx,
 		`INSERT INTO products (name, price, category) VALUES ($1, $2, $3)
 		 RETURNING id, name, price, category`, np.Name, np.Price, np.Category)
 	p, err := scanProduct(row)
@@ -137,7 +213,7 @@ func (s *Store) CreateWithID(ctx context.Context, id string, np domain.NewProduc
 	if err != nil {
 		return nil, fmt.Errorf("postgres: seed id %q is not numeric", id)
 	}
-	tag, err := s.pool.Exec(ctx,
+	tag, err := s.write.Exec(ctx,
 		`INSERT INTO products (id, name, price, category) VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (id) DO NOTHING`, n, np.Name, np.Price, np.Category)
 	if err != nil {
@@ -147,7 +223,7 @@ func (s *Store) CreateWithID(ctx context.Context, id string, np domain.NewProduc
 		return nil, store.ErrConflict
 	}
 	// Keep the identity sequence ahead of explicitly seeded ids.
-	_, err = s.pool.Exec(ctx,
+	_, err = s.write.Exec(ctx,
 		`SELECT setval(pg_get_serial_sequence('products','id'),
 		        GREATEST((SELECT MAX(id) FROM products), 1))`)
 	if err != nil {
@@ -159,7 +235,7 @@ func (s *Store) CreateWithID(ctx context.Context, id string, np domain.NewProduc
 
 func (s *Store) Count(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM products`).Scan(&n)
+	err := s.readPool().QueryRow(ctx, `SELECT count(*) FROM products`).Scan(&n)
 	return n, err
 }
 
@@ -178,7 +254,7 @@ func (v orderView) Create(ctx context.Context, o *domain.Order) error {
 func (v orderView) Healthy(ctx context.Context) error { return v.s.Healthy(ctx) }
 
 func (s *Store) CreateOrder(ctx context.Context, o *domain.Order) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.write.Begin(ctx)
 	if err != nil {
 		return err
 	}

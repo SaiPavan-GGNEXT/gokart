@@ -45,6 +45,7 @@ docker compose --profile postgres up   # durable order store (port 8082)
 docker compose --profile redis up      # Redis-backed validator (port 8081)
 docker compose --profile pipeline up   # live-update pipeline: MinIO object store (port 8083)
 make up-livebuild                      # LIVE artifact creation on screen (port 8084)
+docker compose --profile replica up    # primary/replica postgres + snapshot cache (port 8085)
 ```
 
 **Watch the artifact get created** (`livebuild`): downloads the real 2.1 GB
@@ -163,6 +164,8 @@ request path, so they cannot disagree.
 |---|---|---|
 | `PORT` | `8080` | Render injects this |
 | `STORE` | `memory` | `postgres` requires `DATABASE_URL` (pgx pool, schema auto-applied, transactional orders) |
+| `DATABASE_REPLICA_URL` | — | optional read replica(s), comma-separated: catalog reads round-robin here; **writes and order transactions always hit the primary** |
+| `CATALOG_REFRESH_INTERVAL` | `2m` | postgres mode: products served from an in-memory snapshot refreshed on this cadence (write-through for read-your-writes; `0` = read DB per request) |
 | `VALIDATOR` | `index` | `redis` (`REDIS_ADDR`, seed via `cmd/seedredis`); `static` is a dev-only fixture |
 | `COUPON_INDEX` | `data/coupons.idx` | local path **or `https://` URL** (e.g. an S3 object); fail-fast if unreadable |
 | `COUPON_RELOAD_INTERVAL` | `0` (off) | with a URL index: poll (ETag) and **hot-swap on change — live coupon updates, no restarts** |

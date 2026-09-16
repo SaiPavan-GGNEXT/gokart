@@ -216,6 +216,60 @@ services:
       db:
         condition: service_healthy
 
+  # ---------- profile: replica (primary/replica postgres + snapshot cache) -------
+  # Real streaming replication: writes go to db-primary, catalog reads go to
+  # db-replica, and the API serves the menu from an in-memory snapshot that a
+  # background refresher rebuilds from the REPLICA every 10s. The primary
+  # never sees read traffic.
+  db-primary:
+    image: postgres:16-alpine
+    profiles: [replica]
+    environment:
+      POSTGRES_USER: kart
+      POSTGRES_PASSWORD: kart
+      POSTGRES_DB: kart
+    volumes:
+      - ./deploy/compose/primary-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kart -d kart"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db-replica:
+    image: postgres:16-alpine
+    profiles: [replica]
+    entrypoint: ["sh", "/replica-entrypoint.sh"]
+    environment:
+      POSTGRES_PASSWORD: unused # initdb never runs; PGDATA comes from pg_basebackup
+    volumes:
+      - ./deploy/compose/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    depends_on:
+      db-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kart -d kart"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api-replica:
+    build: .
+    profiles: [replica]
+    ports:
+      - "8085:8080"
+    environment:
+      STORE: postgres
+      DATABASE_URL: postgres://kart:kart@db-primary:5432/kart?sslmode=disable
+      DATABASE_REPLICA_URL: postgres://kart:kart@db-replica:5432/kart?sslmode=disable
+      CATALOG_REFRESH_INTERVAL: 10s # demo-fast; production default is 2m
+      SEED_PRODUCTS: "true"
+    depends_on:
+      db-primary:
+        condition: service_healthy
+      db-replica:
+        condition: service_healthy
+
 volumes:
   corpus: {} # raw .gz cache for the livebuild profile (survives restarts)
   artifact: {} # freshly built coupons.idx handed from build-index to the API
