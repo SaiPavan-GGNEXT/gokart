@@ -44,7 +44,16 @@ Variants (extensibility seams, live):
 docker compose --profile postgres up   # durable order store (port 8082)
 docker compose --profile redis up      # Redis-backed validator (port 8081)
 docker compose --profile pipeline up   # live-update pipeline: MinIO object store (port 8083)
+make up-livebuild                      # LIVE artifact creation on screen (port 8084)
 ```
+
+**Watch the artifact get created** (`livebuild`): downloads the real 2.1 GB
+corpus from S3 (once — volume-cached, sha256-verified against
+[data/MANIFEST.json](data/MANIFEST.json)), builds the index in front of you
+(~16 s of pass1/pass2 logs: 313M lines → 8 codes), and boots the API from
+the freshly made artifact. Proves the committed `coupons.idx` is just this
+pipeline's cached output. Tip: `make prewarm-corpus` first, so demos start
+at the build step.
 
 The `pipeline` profile demonstrates **live coupon updates with zero
 restarts**: the API serves its index from MinIO (S3-compatible, console at

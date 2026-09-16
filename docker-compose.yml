@@ -7,6 +7,10 @@
 #   docker compose --profile pipeline up    → live coupon updates via MinIO (S3-compatible), port 8083
 #     upload a new coupons.idx at http://localhost:9001 (kart/kart12345) or with `mc` —
 #     the API hot-swaps it within COUPON_RELOAD_INTERVAL, no restart.
+#   docker compose --profile livebuild up   → LIVE artifact creation (port 8084):
+#     downloads the 2.1 GB corpus from S3 (once — cached in a volume, sha256-verified),
+#     builds the index in front of you (pass1/pass2 logs stream), then boots the API
+#     from the freshly created artifact. Pre-warm before demos: make prewarm-corpus.
 
 services:
   api:
@@ -106,6 +110,85 @@ services:
       seed-minio:
         condition: service_completed_successfully
 
+  # ---------- profile: livebuild (create the artifact in front of you) ----------
+  # The full pipeline as a local run: fetch raw corpus → build the exact index
+  # → serve from it. Demonstrates that the committed coupons.idx is merely the
+  # pipeline's cached output, reproducible from source at any time.
+  # (Jobs run as root because named volumes are root-owned on first use; the
+  # serving container stays distroless nonroot and mounts the artifact ro.)
+  fetch-corpus:
+    image: alpine:3
+    profiles: [livebuild]
+    user: "0:0"
+    volumes:
+      - corpus:/corpus
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        base=https://orderfoodonline-files.s3.ap-southeast-2.amazonaws.com
+        want1=df1883fb03f5dee2f5076efda84d35a74342b77bc19bf524dc5fab8fe8c79740
+        want2=e95ca9e921dfcb58535eba805f936564cbb95f76c4d15d635de76caf991b6887
+        want3=32f7b98c255db7bf7e06212774daf68277537de3e261def5821737f0e51923bb
+        for i in 1 2 3; do
+          f=/corpus/couponbase$$i.gz
+          eval want=\$$want$$i
+          if [ -f "$$f" ] && [ "$$(sha256sum "$$f" | cut -d' ' -f1)" = "$$want" ]; then
+            echo "OK   couponbase$$i.gz already present and sha256-verified"
+            continue
+          fi
+          echo "GET  couponbase$$i.gz (~700 MB)..."
+          wget -q -O "$$f.part" "$$base/couponbase$$i.gz"
+          got=$$(sha256sum "$$f.part" | cut -d' ' -f1)
+          if [ "$$got" != "$$want" ]; then
+            echo "FATAL sha256 mismatch for couponbase$$i.gz: got $$got" >&2
+            rm -f "$$f.part"; exit 1
+          fi
+          mv "$$f.part" "$$f"
+          echo "OK   couponbase$$i.gz downloaded and verified"
+        done
+
+  build-index:
+    build: .
+    profiles: [livebuild]
+    user: "0:0"
+    entrypoint: ["/app/indexer"]
+    command:
+      - "-out"
+      - "/artifact/coupons.idx"
+      - "/corpus/couponbase1.gz"
+      - "/corpus/couponbase2.gz"
+      - "/corpus/couponbase3.gz"
+    environment:
+      TMPDIR: /artifact # spill files (~3.1 GB) live and die in the volume
+    volumes:
+      - corpus:/corpus:ro
+      - artifact:/artifact
+    depends_on:
+      fetch-corpus:
+        condition: service_completed_successfully
+
+  api-livebuild:
+    build: .
+    profiles: [livebuild]
+    ports:
+      - "8084:8080"
+    environment:
+      STORE: memory
+      SEED_PRODUCTS: "true"
+      COUPON_INDEX: /artifact/coupons.idx
+    volumes:
+      - artifact:/artifact:ro
+    depends_on:
+      build-index:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
   # ---------- profile: postgres ------------------------------------------------
   db:
     image: postgres:16-alpine
@@ -132,3 +215,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+volumes:
+  corpus: {} # raw .gz cache for the livebuild profile (survives restarts)
+  artifact: {} # freshly built coupons.idx handed from build-index to the API
