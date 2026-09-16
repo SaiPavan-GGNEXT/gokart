@@ -4,6 +4,9 @@
 # Profiles demonstrate the extensibility seams:
 #   docker compose --profile postgres up    → durable store (STORE=postgres), port 8082
 #   docker compose --profile redis up       → RedisValidator (VALIDATOR=redis), port 8081
+#   docker compose --profile pipeline up    → live coupon updates via MinIO (S3-compatible), port 8083
+#     upload a new coupons.idx at http://localhost:9001 (kart/kart12345) or with `mc` —
+#     the API hot-swaps it within COUPON_RELOAD_INTERVAL, no restart.
 
 services:
   api:
@@ -50,6 +53,55 @@ services:
       REDIS_ADDR: redis:6379
     depends_on:
       seed-redis:
+        condition: service_completed_successfully
+
+  # ---------- profile: pipeline (S3-compatible object store) --------------------
+  # MinIO stands in for S3: same bucket/object model, console UI, mc CLI, and
+  # even bucket event notifications — the whole deploy/aws story, locally.
+  minio:
+    image: quay.io/minio/minio:latest
+    profiles: [pipeline]
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console
+    environment:
+      MINIO_ROOT_USER: kart
+      MINIO_ROOT_PASSWORD: kart12345
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: create the bucket, publish the committed index, allow anonymous
+  # reads (the server fetches with a plain GET, exactly as it would from S3).
+  seed-minio:
+    image: quay.io/minio/mc:latest
+    profiles: [pipeline]
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./data/coupons.idx:/seed/coupons.idx:ro
+    entrypoint: >
+      sh -c "mc alias set local http://minio:9000 kart kart12345 &&
+             mc mb -p local/coupons &&
+             mc cp /seed/coupons.idx local/coupons/index/coupons.idx &&
+             mc anonymous set download local/coupons"
+
+  api-pipeline:
+    build: .
+    profiles: [pipeline]
+    ports:
+      - "8083:8080"
+    environment:
+      STORE: memory
+      SEED_PRODUCTS: "true"
+      COUPON_INDEX: http://minio:9000/coupons/index/coupons.idx
+      COUPON_RELOAD_INTERVAL: 15s
+    depends_on:
+      seed-minio:
         condition: service_completed_successfully
 
   # ---------- profile: postgres ------------------------------------------------
