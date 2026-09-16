@@ -117,6 +117,22 @@ single hash map in one pass. Both are corpus-pipeline decisions, not code.
 **Why not scan the files per request?** 30–60 s and all cores per check.
 Dead at any traffic.
 
+**Why not Bloom filters (one per file, valid = hits ≥2)?** The
+memory-bounded classic, and worth taking seriously: ~128 MB per filter at
+1 % FPR for 107 M entries, ~384 MB total, no offline step. Rejected on the
+false-accept math: the dangerous case is not a random code (needs ≥2 false
+positives, ≈ 3·p² ≈ 0.03 %) but a code genuinely present in **exactly one
+file** — it truly hits its own filter and needs only one false positive
+from the remaining two: 1 − (1−p)² ≈ **2 % at p = 0.01**. That is precisely
+the class the assignment's own invalid examples (`SUPER100`, `MOODYHRS`)
+belong to, and the corpus contains ~313 M codes of it; with fixed hash
+seeds each one is a frozen lottery ticket for a free discount. The exact
+index makes the category impossible — and costs *less* on every axis
+anyway: ~1 KB of RAM instead of 384 MB, millisecond startup instead of a
+per-node build, and 18 ns lookups instead of 21 hash probes. Bloom filters
+earn their keep when the exact set cannot be precomputed or held; here it
+can, so probabilistic buys nothing and risks money.
+
 **Why not load all codes into a database (the raw-load design)?** Each code
 becomes a row with tens of bytes of overhead plus an index: 313M rows ≈
 20–60 GB of storage for ~3 GB of text whose useful content is 8 codes.
