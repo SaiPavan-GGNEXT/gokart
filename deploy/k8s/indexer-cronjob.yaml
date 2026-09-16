@@ -1,0 +1,66 @@
+# The producing half of the live coupon pipeline (docs/DESIGN.md,
+# "Updating the corpus whenever you like"): rebuilds the index from the raw
+# corpus in object storage and publishes the fresh artifact.
+#
+# WHEN IT RUNS: `schedule` below — example: 03:00 UTC nightly. Pick the
+# cadence that matches how often the business drops new coupon files; the
+# job is idempotent (same inputs → byte-identical index), so running it
+# more often than the corpus changes is merely wasted compute, never wrong.
+# For updates that must land within seconds of an upload, replace the cron
+# trigger with an S3 event notification driving the same Job template.
+#
+# Serving pods notice the new artifact within COUPON_RELOAD_INTERVAL and
+# hot-swap in memory — no restarts, no deploys.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coupon-indexer
+spec:
+  schedule: "0 3 * * *" # nightly at 03:00 UTC — tune to corpus cadence
+  concurrencyPolicy: Forbid # never two builds at once
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1 # the indexer hard-fails on corrupt input; retrying once is enough
+      template:
+        spec:
+          restartPolicy: Never
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 8Gi # 2.1 GB raw + ~3.1 GB spill + headroom
+          initContainers:
+            # 1) pull the raw corpus (changes whenever the business uploads)
+            - name: fetch-raw
+              image: amazon/aws-cli:2
+              command: ["sh", "-c"]
+              args:
+                - aws s3 cp s3://$(BUCKET)/raw/ /work/ --recursive --exclude '*' --include 'couponbase*.gz'
+              envFrom:
+                - secretRef: { name: coupon-pipeline-s3 } # BUCKET + credentials
+              volumeMounts: [{ name: work, mountPath: /work }]
+            # 2) reduce 313M lines → coupons.idx (~16 s on 14 cores)
+            - name: build-index
+              image: ghcr.io/saipavan-ggnext/gokart:latest # same app image; different entrypoint
+              command: ["/app/indexer"]
+              args:
+                - "-out"
+                - "/work/coupons.idx"
+                - "/work/couponbase1.gz"
+                - "/work/couponbase2.gz"
+                - "/work/couponbase3.gz"
+              resources:
+                requests: { cpu: "4", memory: 512Mi }
+                limits: { cpu: "8", memory: 1Gi }
+              volumeMounts: [{ name: work, mountPath: /work }]
+          containers:
+            # 3) publish the artifact — servers polling COUPON_INDEX pick it up
+            - name: publish
+              image: amazon/aws-cli:2
+              command: ["sh", "-c"]
+              args:
+                - aws s3 cp /work/coupons.idx s3://$(BUCKET)/index/coupons.idx
+              envFrom:
+                - secretRef: { name: coupon-pipeline-s3 }
+              volumeMounts: [{ name: work, mountPath: /work }]
