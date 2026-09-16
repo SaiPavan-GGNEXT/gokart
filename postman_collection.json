@@ -1,23 +1,89 @@
 {
   "info": {
     "name": "kart-challenge — Order Food Online API",
-    "description": "All endpoints incl. edge cases. Set {{baseUrl}} (default http://localhost:8080) and {{apiKey}} (default apitest).",
+    "description": "Full demo suite with built-in assertions: run the whole collection (Runner) against a server started with `docker compose up` and every check should pass. Variables: {{baseUrl}} (default http://localhost:8080), {{apiKey}} (apitest), {{noscopeKey}} (apitest_noscope, demonstrates 403).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:8080" },
-    { "key": "apiKey", "value": "apitest" }
+    { "key": "apiKey", "value": "apitest" },
+    { "key": "noscopeKey", "value": "apitest_noscope" }
   ],
   "item": [
     {
-      "name": "Products",
+      "name": "1 · Happy path",
       "item": [
-        { "name": "List products", "request": { "method": "GET", "url": "{{baseUrl}}/api/product" } },
-        { "name": "Get product 10", "request": { "method": "GET", "url": "{{baseUrl}}/api/product/10" } },
-        { "name": "Get product — invalid id (400)", "request": { "method": "GET", "url": "{{baseUrl}}/api/product/abc" } },
-        { "name": "Get product — unknown (404)", "request": { "method": "GET", "url": "{{baseUrl}}/api/product/999" } },
         {
-          "name": "Create product (extension, 201)",
+          "name": "List products (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200', () => pm.response.to.have.status(200));",
+            "pm.test('is a non-empty array', () => { const b = pm.response.json(); pm.expect(b).to.be.an('array').with.length.above(0); });",
+            "pm.test('has Chicken Waffle (spec example, id 10)', () => { const b = pm.response.json(); pm.expect(b.some(p => p.id === '10' && p.name === 'Chicken Waffle')).to.be.true; });"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/product" }
+        },
+        {
+          "name": "Get product 10 (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200', () => pm.response.to.have.status(200));",
+            "pm.test('id is the string \"10\"', () => pm.expect(pm.response.json().id).to.eql('10'));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/product/10" }
+        },
+        {
+          "name": "Place order (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('order id assigned', () => pm.expect(b.id).to.be.a('string').with.length.above(0));",
+            "pm.test('strictly spec-shaped: only id/items/products', () => pm.expect(Object.keys(b).sort()).to.eql(['id','items','products']));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":2}]}" }
+          }
+        },
+        {
+          "name": "Order with VALID coupon HAPPYHRS (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 — HAPPYHRS is in ≥2 corpus files', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"HAPPYHRS\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Coupon with surrounding whitespace (200 — normalized)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 — same normalize() as the indexer', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"  FIFTYOFF  \",\"items\":[{\"productId\":\"5\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Create product — extension endpoint (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('201 created', () => pm.response.to.have.status(201));",
+            "pm.test('server assigned the id', () => pm.expect(pm.response.json().id).to.be.a('string'));"
+          ], "type": "text/javascript" } }],
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/product",
@@ -31,10 +97,61 @@
       ]
     },
     {
-      "name": "Orders",
+      "name": "2 · Auth: 401 vs 403",
       "item": [
         {
-          "name": "Place order (200)",
+          "name": "No api_key (401)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('401 — cannot identify caller', () => pm.response.to.have.status(401));",
+            "pm.test('spec ApiResponse envelope', () => { const b = pm.response.json(); pm.expect(b).to.have.keys('code','type','message'); });"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Unknown api_key (401)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "definitely-wrong" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Valid key WITHOUT create_order scope (403)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('403 — identified but not permitted (scoped keys)', () => pm.response.to.have.status(403));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{noscopeKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Structural errors (400)",
+      "item": [
+        {
+          "name": "Malformed JSON (400)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400', () => pm.response.to.have.status(400));"
+          ], "type": "text/javascript" } }],
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/order",
@@ -42,11 +159,14 @@
               { "key": "api_key", "value": "{{apiKey}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":2}]}" }
+            "body": { "mode": "raw", "raw": "{not json" }
           }
         },
         {
-          "name": "Order with valid coupon HAPPYHRS (200)",
+          "name": "Empty items array (400)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400 — items required non-empty', () => pm.response.to.have.status(400));"
+          ], "type": "text/javascript" } }],
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/order",
@@ -54,11 +174,71 @@
               { "key": "api_key", "value": "{{apiKey}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"couponCode\":\"HAPPYHRS\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+            "body": { "mode": "raw", "raw": "{\"items\":[]}" }
           }
         },
         {
-          "name": "Order with invalid coupon SUPER100 (422)",
+          "name": "Wrong type: quantity as string (400)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400 — type-strict decoding, no silent coercion', () => pm.response.to.have.status(400));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":\"2\"}]}" }
+          }
+        },
+        {
+          "name": "Non-integer product id in path (400)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400 Invalid ID supplied', () => pm.response.to.have.status(400));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/product/abc" }
+        }
+      ]
+    },
+    {
+      "name": "4 · Semantic errors (422) — incl. the corpus traps",
+      "item": [
+        {
+          "name": "Unknown productId (422)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('422', () => pm.response.to.have.status(422));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"777\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Zero quantity (422)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('422', () => pm.response.to.have.status(422));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":0}]}" }
+          }
+        },
+        {
+          "name": "TRAP: SUPER100 — in exactly 1 corpus file (422)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('422 — present in only 1 of 3 files, rule requires ≥2', () => pm.response.to.have.status(422));"
+          ], "type": "text/javascript" } }],
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/order",
@@ -70,16 +250,10 @@
           }
         },
         {
-          "name": "Order without api_key (401)",
-          "request": {
-            "method": "POST",
-            "url": "{{baseUrl}}/api/order",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
-          }
-        },
-        {
-          "name": "Order with unknown product (422)",
+          "name": "TRAP: MOODYHRS — near-miss planted in file 2 only (422)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('422 — the HAPPYHRS look-alike', () => pm.response.to.have.status(422));"
+          ], "type": "text/javascript" } }],
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/order",
@@ -87,17 +261,90 @@
               { "key": "api_key", "value": "{{apiKey}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"777\",\"quantity\":1}]}" }
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"MOODYHRS\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "TRAP: OVER900000 — padding ambiguity vs valid OVER9000 (422)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('422 — NUL-padded index makes this unambiguous', () => pm.response.to.have.status(422));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"OVER900000\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
+          }
+        },
+        {
+          "name": "Coupon too short (422 — length gate, no lookup)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('422', () => pm.response.to.have.status(422));"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/order",
+            "header": [
+              { "key": "api_key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"couponCode\":\"ABC\",\"items\":[{\"productId\":\"10\",\"quantity\":1}]}" }
           }
         }
       ]
     },
     {
-      "name": "Operations",
+      "name": "5 · Protocol edges",
       "item": [
-        { "name": "Liveness", "request": { "method": "GET", "url": "{{baseUrl}}/healthz" } },
-        { "name": "Readiness + index provenance", "request": { "method": "GET", "url": "{{baseUrl}}/readyz" } },
-        { "name": "OpenAPI spec", "request": { "method": "GET", "url": "{{baseUrl}}/openapi.yaml" } }
+        {
+          "name": "Unknown route (404, JSON envelope)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('404', () => pm.response.to.have.status(404));",
+            "pm.test('still the ApiResponse envelope', () => pm.expect(pm.response.json()).to.have.keys('code','type','message'));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/nothing" }
+        },
+        {
+          "name": "Wrong method (405 + Allow header)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('405', () => pm.response.to.have.status(405));",
+            "pm.test('Allow header lists the valid methods', () => pm.expect(pm.response.headers.get('Allow')).to.include('GET'));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/product" }
+        }
+      ]
+    },
+    {
+      "name": "6 · Operations",
+      "item": [
+        {
+          "name": "Liveness (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/healthz" }
+        },
+        {
+          "name": "Readiness + index provenance (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 ready', () => pm.response.to.have.status(200));",
+            "const v = pm.response.json().checks.validator;",
+            "pm.test('serving exactly 8 valid codes', () => pm.expect(v.code_count).to.eql(8));",
+            "pm.test('provenance present (source sha256s)', () => pm.expect(v.sources[0].sha256).to.have.length(64));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/readyz" }
+        },
+        {
+          "name": "Pinned OpenAPI spec (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200', () => pm.response.to.have.status(200));",
+            "pm.test('is the original 3.1.0 spec', () => pm.expect(pm.response.text()).to.include('openapi: 3.1.0'));"
+          ], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/openapi.yaml" }
+        }
       ]
     }
   ]
