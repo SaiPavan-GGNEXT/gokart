@@ -141,7 +141,8 @@ request path, so they cannot disagree.
 | `PORT` | `8080` | Render injects this |
 | `STORE` | `memory` | `postgres` requires `DATABASE_URL` (pgx pool, schema auto-applied, transactional orders) |
 | `VALIDATOR` | `index` | `redis` (`REDIS_ADDR`, seed via `cmd/seedredis`); `static` is a dev-only fixture |
-| `COUPON_INDEX` | `data/coupons.idx` | fail-fast if unreadable |
+| `COUPON_INDEX` | `data/coupons.idx` | local path **or `https://` URL** (e.g. an S3 object); fail-fast if unreadable |
+| `COUPON_RELOAD_INTERVAL` | `0` (off) | with a URL index: poll (ETag) and **hot-swap on change — live coupon updates, no restarts** |
 | `API_KEYS` | apitest w/ both scopes | JSON `{key: [scopes]}` |
 | `SEED_PRODUCTS` | `true` | seeds only an empty catalog |
 | `RATE_LIMIT_RPM` | `300` | `0` disables |

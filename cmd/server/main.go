@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -60,7 +61,7 @@ func run() error {
 	}
 	defer closeStores()
 
-	validator, err := buildValidator(cfg)
+	validator, err := buildValidator(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -135,7 +136,7 @@ func buildStores(ctx context.Context, cfg *config.Config) (store.ProductStore, s
 	}
 }
 
-func buildValidator(cfg *config.Config) (coupon.Validator, error) {
+func buildValidator(ctx context.Context, cfg *config.Config) (coupon.Validator, error) {
 	switch cfg.Validator {
 	case "redis":
 		v, err := coupon.NewRedisValidator(cfg.RedisAddr, cfg.RedisKey)
@@ -152,6 +153,21 @@ func buildValidator(cfg *config.Config) (coupon.Validator, error) {
 		slog.Warn("USING STATIC TEST VALIDATOR — coupon answers are fixtures, not real corpus data")
 		return coupon.NewStaticValidator("HAPPYHRS", "FIFTYOFF")
 	default: // "index"
+		if strings.HasPrefix(cfg.CouponIndexPath, "http://") ||
+			strings.HasPrefix(cfg.CouponIndexPath, "https://") {
+			v, err := coupon.NewRemoteValidator(ctx, cfg.CouponIndexPath)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"remote coupon index %q unreachable or invalid: %w",
+					cfg.CouponIndexPath, err)
+			}
+			if cfg.CouponReloadInterval > 0 {
+				v.StartPolling(ctx, cfg.CouponReloadInterval)
+				slog.Info("coupon index polling enabled",
+					"url", cfg.CouponIndexPath, "interval", cfg.CouponReloadInterval.String())
+			}
+			return v, nil
+		}
 		v, err := coupon.NewIndexValidator(cfg.CouponIndexPath)
 		if err != nil {
 			return nil, fmt.Errorf(

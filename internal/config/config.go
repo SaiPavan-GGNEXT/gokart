@@ -22,19 +22,23 @@ type Config struct {
 	Store           string // "memory" | "postgres"
 	DatabaseURL     string
 	Validator       string // "index" | "redis" | "static" (static is test-only and must be explicit)
-	CouponIndexPath string
-	RedisAddr       string
-	RedisKey        string // set name holding valid codes
-	APIKeys         map[string][]string
-	SeedProducts    bool // seed catalog at startup when the store is empty
-	BodyLimitBytes  int
-	RateLimitRPM    int    // per-IP requests/minute; 0 disables
-	CORSOrigins     string // comma-separated allowed origins; "*" for any
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ShutdownTimeout time.Duration
-	Env             string // "dev" | "prod"
+	CouponIndexPath string // local path, or http(s):// URL (e.g. an S3 object)
+	// CouponReloadInterval, when >0 and CouponIndexPath is a URL, polls the
+	// URL and hot-swaps the index on change — live corpus updates without
+	// restarts. 0 disables polling (fetch once at startup).
+	CouponReloadInterval time.Duration
+	RedisAddr            string
+	RedisKey             string // set name holding valid codes
+	APIKeys              map[string][]string
+	SeedProducts         bool // seed catalog at startup when the store is empty
+	BodyLimitBytes       int
+	RateLimitRPM         int    // per-IP requests/minute; 0 disables
+	CORSOrigins          string // comma-separated allowed origins; "*" for any
+	ReadTimeout          time.Duration
+	WriteTimeout         time.Duration
+	IdleTimeout          time.Duration
+	ShutdownTimeout      time.Duration
+	Env                  string // "dev" | "prod"
 }
 
 // defaultAPIKeys grants the spec's documented key the scopes it needs, plus a
@@ -44,22 +48,23 @@ const defaultAPIKeys = `{"apitest":["create_order","manage_products"],"apitest_n
 // Load reads configuration from the environment.
 func Load() (*Config, error) {
 	c := &Config{
-		Port:            getenv("PORT", "8080"),
-		Store:           getenv("STORE", "memory"),
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		Validator:       getenv("VALIDATOR", "index"),
-		CouponIndexPath: getenv("COUPON_INDEX", "data/coupons.idx"),
-		RedisAddr:       getenv("REDIS_ADDR", "localhost:6379"),
-		RedisKey:        getenv("REDIS_KEY", "coupons:valid"),
-		SeedProducts:    getenvBool("SEED_PRODUCTS", true),
-		BodyLimitBytes:  getenvInt("BODY_LIMIT_BYTES", 1<<20), // 1 MiB
-		RateLimitRPM:    getenvInt("RATE_LIMIT_RPM", 300),
-		CORSOrigins:     getenv("CORS_ORIGINS", "*"),
-		ReadTimeout:     getenvDur("READ_TIMEOUT", 10*time.Second),
-		WriteTimeout:    getenvDur("WRITE_TIMEOUT", 10*time.Second),
-		IdleTimeout:     getenvDur("IDLE_TIMEOUT", 60*time.Second),
-		ShutdownTimeout: getenvDur("SHUTDOWN_TIMEOUT", 10*time.Second),
-		Env:             getenv("ENV", "dev"),
+		Port:                 getenv("PORT", "8080"),
+		Store:                getenv("STORE", "memory"),
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		Validator:            getenv("VALIDATOR", "index"),
+		CouponIndexPath:      getenv("COUPON_INDEX", "data/coupons.idx"),
+		CouponReloadInterval: getenvDur("COUPON_RELOAD_INTERVAL", 0),
+		RedisAddr:            getenv("REDIS_ADDR", "localhost:6379"),
+		RedisKey:             getenv("REDIS_KEY", "coupons:valid"),
+		SeedProducts:         getenvBool("SEED_PRODUCTS", true),
+		BodyLimitBytes:       getenvInt("BODY_LIMIT_BYTES", 1<<20), // 1 MiB
+		RateLimitRPM:         getenvInt("RATE_LIMIT_RPM", 300),
+		CORSOrigins:          getenv("CORS_ORIGINS", "*"),
+		ReadTimeout:          getenvDur("READ_TIMEOUT", 10*time.Second),
+		WriteTimeout:         getenvDur("WRITE_TIMEOUT", 10*time.Second),
+		IdleTimeout:          getenvDur("IDLE_TIMEOUT", 60*time.Second),
+		ShutdownTimeout:      getenvDur("SHUTDOWN_TIMEOUT", 10*time.Second),
+		Env:                  getenv("ENV", "dev"),
 	}
 
 	raw := getenv("API_KEYS", defaultAPIKeys)

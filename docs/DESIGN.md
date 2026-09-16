@@ -159,6 +159,41 @@ read-only membership set of 8 entries.
 request path need data that changes at runtime and must be shared across
 nodes? No → ship it with the process. Yes → external store.*
 
+## Updating the corpus whenever you like (implemented)
+
+The offline step does not mean *manual*. The intended pipeline splits raw
+data from the served artifact:
+
+```
+upload anytime ─► s3://bucket/raw/couponbase*.gz
+                        │   (trigger: cron / CI / S3 event / by hand)
+                        ▼
+              indexer job, anywhere (~16 s)
+                        ▼
+              s3://bucket/index/coupons.idx      (736 B, versioned, CRC'd)
+                        ▼
+   every server: COUPON_INDEX=<that URL>  +  COUPON_RELOAD_INTERVAL=60s
+                        ▼
+        polls with If-None-Match; on change: fetch → full verification
+        (magic/size/CRC) → atomic in-memory swap. Zero restarts.
+```
+
+Semantics (`internal/coupon/remote.go`, tested in `remote_test.go`):
+**initial fetch is fail-fast** (no verified index, no server — same policy as
+a local file); **reloads are fail-static** (a bad or unreachable update is
+logged and the current index keeps serving — yesterday's verified truth
+beats an unverifiable update); **swaps are atomic** (`atomic.Pointer` —
+requests see old or new, never a mix, no locks on the lookup path).
+
+Why not process the raw files at pod startup or during `docker build`
+instead? Cadence mismatch: code changes often, the corpus changes rarely.
+Startup processing makes every replica pay download + build on every boot
+(and couples booting to S3 being up); build-time processing makes every CI
+run and deploy pay it (and Docker layer caches silently serve stale corpora).
+Binding the work to its own trigger — a corpus change — keeps pods booting
+in milliseconds and builds hermetic, while freshness = pipeline run + one
+poll interval.
+
 ## What breaks this design — stated before you ask
 
 | Change | Response |
