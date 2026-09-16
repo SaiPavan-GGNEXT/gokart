@@ -135,27 +135,56 @@ func (c *ProductStore) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// --- reads: pure snapshot, zero I/O ----------------------------------------
+// --- reads: snapshot first, read-through on miss -----------------------------
 
 func (c *ProductStore) List(context.Context) ([]domain.Product, error) {
 	return c.snap.Load().list, nil // immutable by convention; rebuilt, never mutated
 }
 
-func (c *ProductStore) Get(_ context.Context, id string) (*domain.Product, error) {
-	p, ok := c.snap.Load().byID[id]
-	if !ok {
-		return nil, store.ErrNotFound
+// Get serves from the snapshot; on a miss it reads through to the inner
+// store (one PK-indexed query) and pulls a found row into the snapshot, so
+// point lookups have ~zero staleness even for products created on another
+// instance seconds ago — repeats become cache hits.
+//
+// True misses are NOT negatively cached: an attacker probing random ids pays
+// one indexed query per probe, bounded by the rate limiter. Negative caching
+// is the documented next step if that load ever matters.
+func (c *ProductStore) Get(ctx context.Context, id string) (*domain.Product, error) {
+	if p, ok := c.snap.Load().byID[id]; ok {
+		return &p, nil
 	}
-	return &p, nil
+	p, err := c.inner.Get(ctx, id)
+	if err != nil {
+		return nil, err // includes store.ErrNotFound
+	}
+	c.upsert(*p)
+	return p, nil
 }
 
-func (c *ProductStore) GetMany(_ context.Context, ids []string) (map[string]domain.Product, error) {
+// GetMany (the order path) applies the same read-through to only the missing
+// ids — one batched query, and only when misses exist — so an order for a
+// seconds-old product succeeds instead of waiting out the refresh interval.
+func (c *ProductStore) GetMany(ctx context.Context, ids []string) (map[string]domain.Product, error) {
 	snap := c.snap.Load()
 	out := make(map[string]domain.Product, len(ids))
+	var missing []string
 	for _, id := range ids {
 		if p, ok := snap.byID[id]; ok {
 			out[id] = p
+		} else {
+			missing = append(missing, id)
 		}
+	}
+	if len(missing) == 0 {
+		return out, nil
+	}
+	found, err := c.inner.GetMany(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	for id, p := range found {
+		out[id] = p
+		c.upsert(p)
 	}
 	return out, nil
 }
@@ -171,7 +200,7 @@ func (c *ProductStore) Create(ctx context.Context, np domain.NewProduct) (*domai
 	if err != nil {
 		return nil, err
 	}
-	c.add(*p)
+	c.upsert(*p)
 	return p, nil
 }
 
@@ -185,23 +214,39 @@ func (c *ProductStore) CreateWithID(ctx context.Context, id string, np domain.Ne
 	if err != nil {
 		return nil, err
 	}
-	c.add(*p)
+	c.upsert(*p)
 	return p, nil
 }
 
-// add applies copy-on-write: never mutate a published snapshot. The
+// upsert applies copy-on-write: never mutate a published snapshot. Existing
+// ids are replaced in place (concurrent read-throughs of the same product
+// stay idempotent — no duplicate list entries); new ids append. The
 // fingerprint is cleared so the next tick reconciles with the store.
-func (c *ProductStore) add(p domain.Product) {
+func (c *ProductStore) upsert(p domain.Product) {
 	for {
 		old := c.snap.Load()
-		list := make([]domain.Product, len(old.list), len(old.list)+1)
-		copy(list, old.list)
-		list = append(list, p)
 		byID := make(map[string]domain.Product, len(old.byID)+1)
 		for k, v := range old.byID {
 			byID[k] = v
 		}
 		byID[p.ID] = p
+
+		var list []domain.Product
+		if _, exists := old.byID[p.ID]; exists {
+			list = make([]domain.Product, len(old.list))
+			copy(list, old.list)
+			for i := range list {
+				if list[i].ID == p.ID {
+					list[i] = p
+					break
+				}
+			}
+		} else {
+			list = make([]domain.Product, len(old.list), len(old.list)+1)
+			copy(list, old.list)
+			list = append(list, p)
+		}
+
 		if c.snap.CompareAndSwap(old, &snapshot{
 			list: list, byID: byID, loadedAt: old.loadedAt, fp: "",
 		}) {

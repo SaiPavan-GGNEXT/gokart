@@ -19,6 +19,7 @@ type fakeStore struct {
 	rows     []domain.Product
 	fail     bool
 	listCall int
+	getCall  int
 }
 
 func (f *fakeStore) List(context.Context) ([]domain.Product, error) {
@@ -34,6 +35,10 @@ func (f *fakeStore) List(context.Context) ([]domain.Product, error) {
 func (f *fakeStore) Get(_ context.Context, id string) (*domain.Product, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.getCall++
+	if f.fail {
+		return nil, errors.New("db down")
+	}
 	for _, p := range f.rows {
 		if p.ID == id {
 			return &p, nil
@@ -106,6 +111,12 @@ func (f *fakeStore) listCalls() int {
 	return f.listCall
 }
 
+func (f *fakeStore) getCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getCall
+}
+
 func newCached(t *testing.T, inner *fakeStore) *ProductStore {
 	t.Helper()
 	c, err := New(context.Background(), inner, 0) // no ticker; ticks driven manually
@@ -115,26 +126,83 @@ func newCached(t *testing.T, inner *fakeStore) *ProductStore {
 	return c
 }
 
-func TestServesFromSnapshotAndRefreshPicksUpChanges(t *testing.T) {
+func TestListIsBoundedStaleButRefreshPicksUpChanges(t *testing.T) {
 	ctx := context.Background()
 	inner := &fakeStore{rows: []domain.Product{{ID: "1", Name: "Waffle", Price: 5, Category: "W"}}}
 	c := newCached(t, inner)
 
-	if n, _ := c.Count(ctx); n != 1 {
-		t.Fatalf("initial count = %d", n)
-	}
-
-	// Another instance writes to the store: invisible until refresh...
+	// Another instance writes to the store: the LIST stays bounded-stale...
 	inner.addRow(domain.Product{ID: "2", Name: "Latte", Price: 4, Category: "D"})
-	if _, err := c.Get(ctx, "2"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatal("bounded staleness: new row must be invisible before refresh")
+	if list, _ := c.List(ctx); len(list) != 1 {
+		t.Fatalf("list must be snapshot-stale before refresh, got %d rows", len(list))
 	}
-	// ...and visible after one tick.
+	// ...until one tick reconciles it.
 	if err := c.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if list, _ := c.List(ctx); len(list) != 2 {
+		t.Fatalf("after refresh list = %d rows", len(list))
+	}
+}
+
+func TestGetReadsThroughOnMissAndCachesTheHit(t *testing.T) {
+	ctx := context.Background()
+	inner := &fakeStore{rows: []domain.Product{{ID: "1", Name: "Waffle", Price: 5, Category: "W"}}}
+	c := newCached(t, inner)
+
+	// Row created on "another instance" after our snapshot loaded:
+	inner.addRow(domain.Product{ID: "2", Name: "Latte", Price: 4, Category: "D"})
+
+	// Point lookup finds it via read-through (PK-indexed query)...
+	p, err := c.Get(ctx, "2")
+	if err != nil || p.Name != "Latte" {
+		t.Fatalf("read-through failed: %v %v", p, err)
+	}
+	// ...and the hit is now cached: even with the DB down, repeats serve.
+	inner.setFail(true)
 	if p, err := c.Get(ctx, "2"); err != nil || p.Name != "Latte" {
-		t.Fatalf("after refresh: %v %v", p, err)
+		t.Fatalf("read-through result was not cached: %v %v", p, err)
+	}
+	// No duplicate list entries from the upsert.
+	inner.setFail(false)
+	if list, _ := c.List(ctx); len(list) != 2 {
+		t.Fatalf("upsert duplicated rows: %d", len(list))
+	}
+}
+
+func TestGetManyReadsThroughOnlyForMissingIDs(t *testing.T) {
+	ctx := context.Background()
+	inner := &fakeStore{rows: []domain.Product{{ID: "1", Name: "Waffle", Price: 5, Category: "W"}}}
+	c := newCached(t, inner)
+	inner.addRow(domain.Product{ID: "2", Name: "Latte", Price: 4, Category: "D"})
+
+	got, err := c.GetMany(ctx, []string{"1", "2", "999"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got["2"].Name != "Latte" {
+		t.Fatalf("GetMany read-through: %v", got)
+	}
+	if _, ok := got["999"]; ok {
+		t.Fatal("unknown id must stay missing")
+	}
+}
+
+func TestTrueMissesAreNotNegativelyCached(t *testing.T) {
+	ctx := context.Background()
+	inner := &fakeStore{rows: []domain.Product{{ID: "1", Name: "Waffle", Price: 5, Category: "W"}}}
+	c := newCached(t, inner)
+
+	before := inner.getCalls()
+	for i := 0; i < 3; i++ {
+		if _, err := c.Get(ctx, "404404"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound, got %v", err)
+		}
+	}
+	// Each probe hits the store once (documented: rate limiter bounds this;
+	// negative caching is the next step if it ever matters).
+	if got := inner.getCalls() - before; got != 3 {
+		t.Fatalf("expected 3 store hits for 3 negative probes, got %d", got)
 	}
 }
 

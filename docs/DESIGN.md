@@ -137,6 +137,22 @@ Three cooperating pieces, each independently defensible:
   traffic. This is the repo's one data pattern a third time: immutable
   snapshot + background refresh + atomic swap (coupon index, corpus watcher,
   now catalog).
+- **Read-through on point-lookup misses**: `Get`/`GetMany` serve from the
+  snapshot, but a miss falls through to one PK-indexed query, and a found
+  row is upserted into the snapshot (copy-on-write, so repeats are cache
+  hits and the list never duplicates). Effect: the *list* is bounded-stale,
+  but *point lookups and order placement* see a product created on another
+  instance within milliseconds — verified live in the replica profile
+  (psql INSERT on the primary → instant 200 via the API, before any refresh
+  tick). True misses are deliberately not negatively cached: a prober pays
+  one indexed query per attempt, bounded by the rate limiter; negative
+  caching is the documented next step if that load ever materializes.
+- **Indexing**: every catalog query rides the PRIMARY KEY's implicit B-tree
+  — measured with EXPLAIN: `id = $1` → *Index Scan using products_pkey*;
+  the order path's `id = ANY($1)` → *Bitmap Index Scan*; `ORDER BY id` and
+  the fingerprint's `max(id)` are index-served too. No secondary indexes
+  exist because no query needs one: unused indexes are write amplification.
+  First real candidate: `(category)`, the day a filtered listing ships.
 - **Read/write split** (`internal/store/postgres`): reads round-robin over
   `DATABASE_REPLICA_URL` pools; writes, order transactions, and schema
   always use the primary. Unconfigured, both roles share one pool — zero
