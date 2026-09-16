@@ -16,3 +16,7 @@ The API itself deploys as a plain stateless `Deployment`:
 `COUPON_RELOAD_INTERVAL=60s`, readiness on `/readyz` (which reports the
 loaded index's provenance), and horizontal scaling with no coordination —
 every replica carries its own copy of the answer.
+
+For updates within seconds of an upload instead of a schedule, see
+[../aws/README.md](../aws/README.md) — the S3-event-driven variant of the
+same pipeline (including the torn-upload marker pattern).
