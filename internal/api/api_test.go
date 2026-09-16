@@ -189,7 +189,7 @@ func TestEdgeCaseMatrix(t *testing.T) {
 func TestCORSPreflight(t *testing.T) {
 	app := newTestApp(t)
 	req := httptest.NewRequest("OPTIONS", "/api/order", nil)
-	req.Header.Set("Origin", "https://kart-ui.onrender.com")
+	req.Header.Set("Origin", "https://frontend.example.com")
 	req.Header.Set("Access-Control-Request-Method", "POST")
 	req.Header.Set("Access-Control-Request-Headers", "api_key, content-type")
 	resp, err := app.Test(req, 5000)

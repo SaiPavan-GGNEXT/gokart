@@ -3,7 +3,7 @@
 // the catalog-management extension endpoint end to end.
 //
 //	go run ./cmd/seedproducts                                  # local server
-//	go run ./cmd/seedproducts -url https://gokart-zba3.onrender.com
+//	go run ./cmd/seedproducts -url https://api.example.com     # any deployment
 //
 // Idempotence note: the endpoint assigns fresh ids, so run this against an
 // empty catalog (start the server with SEED_PRODUCTS=false) or expect

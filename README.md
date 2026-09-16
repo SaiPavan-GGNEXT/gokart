@@ -72,8 +72,8 @@ go run ./cmd/watcher -publish http://localhost:9000/coupons/index/coupons.idx \
 ## API
 
 Base path `/api` (per the spec's server URL). Three ways to explore:
-**interactive Swagger UI at [`/docs`](https://gokart-zba3.onrender.com/docs)**
-("Try it out" targets the serving host; Authorize with `apitest`),
+**interactive Swagger UI at `http://localhost:8080/docs`** ("Try it out"
+targets the serving host; Authorize with `apitest`),
 [postman_collection.json](postman_collection.json), or the pinned original
 spec served at `/openapi.yaml`.
 
@@ -162,7 +162,7 @@ request path, so they cannot disagree.
 
 | Var | Default | Notes |
 |---|---|---|
-| `PORT` | `8080` | Render injects this |
+| `PORT` | `8080` | standard for PaaS-injected ports |
 | `STORE` | `memory` | `postgres` requires `DATABASE_URL` (pgx pool, schema auto-applied, transactional orders) |
 | `DATABASE_REPLICA_URL` | — | optional read replica(s), comma-separated: catalog reads round-robin here; **writes and order transactions always hit the primary** |
 | `CATALOG_REFRESH_INTERVAL` | `2m` | postgres mode: products served from an in-memory snapshot refreshed on this cadence (write-through for read-your-writes; `0` = read DB per request) |
@@ -187,12 +187,12 @@ internal/api      Fiber router, middleware (auth/scopes, logging), handlers
 internal/service  business rules (error taxonomy, batched lookups)
 internal/store    interfaces + memory & postgres implementations
 internal/seed     embedded default catalog (spec's "Chicken Waffle" = id 10)
-deploy/, render.yaml, .github/workflows/ci.yml, docker-compose.yml
+deploy/ (k8s + S3-event pipeline docs), .github/workflows/ci.yml, docker-compose.yml
 ```
 
 ## Tests & CI
 
-`make race` — 64 tests including the full edge-case matrix over a real index
+`make race` — 82 tests including the full edge-case matrix over a real index
 file, the indexer end-to-end on a miniature corpus replicating the real
 trap structure (codes planted at EOF, near-miss single-file codes,
 duplicate-within-file, truncated-gzip hard failure), index corruption
@@ -200,13 +200,42 @@ duplicate-within-file, truncated-gzip hard failure), index corruption
 race tests, benchmark, Docker build, and a **container smoke test that
 validates HAPPYHRS/SUPER100 against the real index inside the image**.
 
-## Deploying (Render)
+## Running locally
 
-[render.yaml](render.yaml) is a Blueprint: web service (this Dockerfile,
-health-gated on `/readyz`) + managed Postgres wired via `DATABASE_URL`.
-Dashboard → Blueprints → New → point at this repo. Free-tier note: Render's
-free Postgres expires after 30 days; set `STORE=memory` for an infra-free
-demo deployment.
+Prerequisites: **Docker** (any recent version) — or **Go 1.26+** to run
+without containers. No database, no downloads, no other services needed
+for the default mode.
+
+```bash
+git clone https://github.com/SaiPavan-GGNEXT/gokart && cd gokart
+
+# Option A — Docker (exactly what the reviewer smoke test runs in CI):
+docker compose up --build            # API on http://localhost:8080
+
+# Option B — bare Go:
+make run                             # = go run ./cmd/server
+```
+
+Then verify (or import [postman_collection.json](postman_collection.json)
+and hit Run — every request carries assertions):
+
+```bash
+curl localhost:8080/readyz           # ready + coupon-index provenance
+curl localhost:8080/api/product
+open http://localhost:8080/docs      # interactive Swagger UI
+```
+
+Tests and tooling:
+
+```bash
+make test        # all packages
+make race        # with the race detector (the CI gate)
+make bench       # 18 ns coupon-lookup benchmark
+# variants: make up-postgres | up-redis | up-pipeline | up-livebuild | up-replica
+```
+
+The server binds `:8080` by default (`PORT` to change) and fails fast with
+an actionable message if the coupon index is missing or corrupt.
 
 ## Notes for reviewers
 
